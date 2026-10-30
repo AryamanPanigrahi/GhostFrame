@@ -46,6 +46,8 @@ riposte/
 │       ├── main.rs       # window, menus, main loop
 │       ├── sim/          # deterministic simulation (NO floats)
 │       ├── render/       # drawing (floats allowed here only)
+│       │   ├── mod.rs    # shapes, HUD, health bars (Aryaman)
+│       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
 │       └── input.rs      # keyboard → input bitmask
 ├── server/               # WebSocket relay (crate: riposte-server)
 │   └── src/main.rs
@@ -246,7 +248,7 @@ Ownership is by milestone and file, not by crate.
 
 | | Aryaman | Ram |
 |---|---|---|
-| Owns | R3 (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`), R4 (`rewind/src/transport/fake.rs` + its tests), `game/` except `game/src/render/`, final integration, WASM, deployment | R1 (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`), R2 (`rewind/src/session/synctest.rs`, `rewind/examples/boxes.rs`), R5, R6 (`rewind/src/transport/websocket.rs`), `server/`, G6 (`game/src/render/`) |
+| Owns | R3 (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`), R4 (`rewind/src/transport/fake.rs` + its tests), `game/` including basic drawing in `game/src/render/mod.rs`, final integration, WASM, deployment | R1 (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`), R2 (`rewind/src/session/synctest.rs`, `rewind/examples/boxes.rs`), R5, R6 (`rewind/src/transport/websocket.rs`), `server/`, G6 (new files under `game/src/render/`, e.g. `render/effects.rs`) |
 | Credits run out | Nov 5, 1:29 PM | Nov 4, evening |
 
 ### Milestones
@@ -268,7 +270,7 @@ Ownership is by milestone and file, not by crate.
 - **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.
 - **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
 - **S2:** Disconnects, timeouts, logging, Dockerfile.
-- **G6:** Game feel, render-only (`game/src/render/`): hit flash, shake, hitstop visuals, tuning of frame data.
+- **G6:** Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
 - **I1:** Online native vs native through the relay, tested on two laptops.

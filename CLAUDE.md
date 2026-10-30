@@ -14,7 +14,7 @@ Ownership is by milestone and file, not by crate.
 **Aryaman**
 - R3: `P2PSession` (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`)
 - R4: fake-network transport + convergence tests (`rewind/src/transport/fake.rs` and its tests)
-- G1, G2, G3, G4, G5, G7 (`game/`, except `game/src/render/`)
+- G1, G2, G3, G4, G5, G7 (`game/`, including the basic drawing in `game/src/render/mod.rs`, but not Ram's G6 files)
 - Integration, WASM, deployment
 
 **Ram**
@@ -23,7 +23,7 @@ Ownership is by milestone and file, not by crate.
 - R5: checksum exchange, desync event, stall (builds on R3)
 - R6: WebSocket transport (`rewind/src/transport/websocket.rs`)
 - S1, S2: relay server (`server/`)
-- G6: game feel, render-only (`game/src/render/`)
+- G6: game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from `render/mod.rs`)
 
 Rules:
 - Only edit files owned by the person running this session, unless the task explicitly says otherwise.
