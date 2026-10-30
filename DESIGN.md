@@ -242,47 +242,54 @@ Any new dependency must be justified in the session summary.
 
 ## 10. Division of labour
 
-| | Aryaman | Friend (`<FRIEND>`) |
+Ownership is by milestone and file, not by crate.
+
+| | Aryaman | Ram |
 |---|---|---|
-| Owns | `game/`, final integration, WASM, deployment | `rewind/`, `server/` |
+| Owns | R3 (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`), R4 (`rewind/src/transport/fake.rs` + its tests), `game/` except `game/src/render/`, final integration, WASM, deployment | R1 (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`), R2 (`rewind/src/session/synctest.rs`, `rewind/examples/boxes.rs`), R5, R6 (`rewind/src/transport/websocket.rs`), `server/`, G6 (`game/src/render/`) |
 | Credits run out | Nov 5, 1:29 PM | Nov 4, evening |
 
 ### Milestones
 
-**rewind + server (`<FRIEND>`)**
-- **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
-- **R2:** `SyncTestSession` + `examples/boxes.rs` toy game. *Needed by Aryaman for G5. Target: Sun Nov 1.*
-- **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair.
+**Aryaman**
+- **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
 - **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
-- **R5:** Checksum exchange, desync event, stall when too far ahead.
-- **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.
-- **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
-- **S2:** Disconnects, timeouts, logging, Dockerfile.
-
-**game (Aryaman)**
 - **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
 - **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
 - **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
 - **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
 - **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
-- **G6:** Game feel: hit flash, shake, hitstop visuals, tuning of frame data.
 - **G7:** Main menu (create room / join with code), WASM build.
+
+**Ram**
+- **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
+- **R2:** `SyncTestSession` + `examples/boxes.rs` toy game. *Needed by Aryaman for G5.*
+- **R5:** Checksum exchange, desync event, stall when too far ahead (builds on R3).
+- **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.
+- **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
+- **S2:** Disconnects, timeouts, logging, Dockerfile.
+- **G6:** Game feel, render-only (`game/src/render/`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
 - **I1:** Online native vs native through the relay, tested on two laptops.
 - **I2:** Online in the browser.
 - **I3:** Deploy server + client, public link in README.
 
+**Dependencies**
+- R3 needs R1 merged first.
+- R5 needs R3.
+- G5 needs R2.
+
 ### Schedule
 
-| Date | `<FRIEND>` | Aryaman |
+| Date | Ram | Aryaman |
 |---|---|---|
-| Fri Oct 30 (night) | Read DESIGN.md, R1 | Repo + workspace, G1 |
-| Sat Oct 31 | R2, R3 | G2, G3 |
-| Sun Nov 1 | R3, R4 | G3, G4 |
-| Mon Nov 2 | R5, S1 | G5 (sync test), G6 |
-| Tue Nov 3 | R6, S2 | G6, G7 |
-| Wed Nov 4 (day) | **I1 together**, then LEARNING.md + docs for rewind/server | **I1 together** |
+| Fri Oct 30 (night) | R1 | Workspace + G1 |
+| Sat Oct 31 | R2 | R3 (must merge by Sat night, R5 depends on it) |
+| Sun Nov 1 | S1, S2 | R4, G2 |
+| Mon Nov 2 | R5, R6 | G3, G4 |
+| Tue Nov 3 | G6, finish R6 | G5 (sync test), G7 |
+| Wed Nov 4 (day) | **I1 together**, then LEARNING.md + docs for their parts | **I1 together** |
 | Wed Nov 4 (night) to Thu Nov 5 1 PM | Credits expired | I2, I3, docs/frame-walkthrough.md, docs/exercises.md, README |
 
 Each person's last ~$15 goes to learning material before their credits expire (see section 12).

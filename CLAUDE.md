@@ -9,9 +9,24 @@ Riposte is a 2-player online fighting game in Rust with rollback netcode. It's a
 **Read DESIGN.md before starting any task.** It holds the architecture, the frozen interface, the protocol, the milestones (R1–R6, S1–S2, G1–G7, I1–I3) and who owns what.
 
 ## Ownership
-- Aryaman owns `game/`, integration, WASM and deployment.
-- `<FRIEND>` owns `rewind/` and `server/`.
-- Only edit the crate(s) belonging to the person running this session, unless the task explicitly says otherwise.
+Ownership is by milestone and file, not by crate.
+
+**Aryaman**
+- R3: `P2PSession` (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`)
+- R4: fake-network transport + convergence tests (`rewind/src/transport/fake.rs` and its tests)
+- G1, G2, G3, G4, G5, G7 (`game/`, except `game/src/render/`)
+- Integration, WASM, deployment
+
+**Ram**
+- R1: crate skeleton, `api.rs` traits, `InputQueue` (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`)
+- R2: `SyncTestSession` + `examples/boxes.rs`
+- R5: checksum exchange, desync event, stall (builds on R3)
+- R6: WebSocket transport (`rewind/src/transport/websocket.rs`)
+- S1, S2: relay server (`server/`)
+- G6: game feel, render-only (`game/src/render/`)
+
+Rules:
+- Only edit files owned by the person running this session, unless the task explicitly says otherwise.
 - Never change `rewind/src/api.rs` or the protocol enums unless the task says both people agreed. If a change seems necessary, stop and explain why instead.
 
 ## Learning rules (highest priority)
