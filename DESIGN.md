@@ -1,0 +1,308 @@
+# Riposte — Design Document
+
+Riposte is a 2-player online fighting game written in Rust. Its multiplayer runs on **rewind**, a game-agnostic rollback netcode library developed in the same repo.
+
+---
+
+## 1. Goals and non-goals
+
+**Goals**
+- Online 1v1 that feels responsive at 50–150 ms ping, using rollback netcode.
+- `rewind` is fully independent of the game, so any deterministic game implementing its trait can use it.
+- Provable determinism, through a sync test that forces rollbacks every frame and compares checksums.
+- Playable in the browser (WASM) through a room-code link.
+- Every part understandable and explainable by both authors.
+
+**Non-goals (v1)**
+- More than 2 players, spectators, replays, ranked matchmaking.
+- Art assets. Shapes and colours only, with polish going into game feel.
+- More than one stage, or more than one character design (both players use the same moveset).
+
+---
+
+## 2. Repository layout
+
+```
+riposte/
+├── Cargo.toml            # workspace root
+├── CLAUDE.md             # instructions for Claude sessions
+├── DESIGN.md             # this file
+├── LEARNING.md           # concept → explanation → where it lives in the code
+├── SETUP.md              # every setup command, explained, to run by hand
+├── rewind/               # rollback netcode library (crate: rewind)
+│   ├── src/
+│   │   ├── lib.rs
+│   │   ├── api.rs        # RollbackGame + Transport traits (FROZEN interface)
+│   │   ├── input_queue.rs
+│   │   ├── snapshot.rs   # ring buffer of saved states
+│   │   ├── session/
+│   │   │   ├── synctest.rs
+│   │   │   └── p2p.rs
+│   │   ├── protocol.rs   # messages between peers
+│   │   └── transport/    # in-memory, fake-latency, websocket
+│   └── examples/boxes.rs # toy game used to test rewind without Riposte
+├── game/                 # the fighting game (crate: riposte-game)
+│   └── src/
+│       ├── main.rs       # window, menus, main loop
+│       ├── sim/          # deterministic simulation (NO floats)
+│       ├── render/       # drawing (floats allowed here only)
+│       └── input.rs      # keyboard → input bitmask
+├── server/               # WebSocket relay (crate: riposte-server)
+│   └── src/main.rs
+└── docs/
+    ├── frame-walkthrough.md
+    └── exercises.md
+```
+
+---
+
+## 3. Architecture
+
+```mermaid
+flowchart LR
+    subgraph ClientA["Player A (browser or native)"]
+        KA[Keyboard] --> IA[input.rs]
+        IA --> RA[rewind P2PSession]
+        RA <--> GA[Riposte sim]
+        GA --> DA[render]
+    end
+    subgraph ClientB["Player B"]
+        KB[Keyboard] --> IB[input.rs]
+        IB --> RB[rewind P2PSession]
+        RB <--> GB[Riposte sim]
+        GB --> DB[render]
+    end
+    RA <-- "WebSocket (inputs, checksums)" --> S[(Relay server)]
+    S <-- "WebSocket" --> RB
+```
+
+Key points:
+- Each client runs the **full simulation**. Only **inputs** travel over the network, never game state.
+- The server is a **dumb relay**. It pairs two players by room code and forwards bytes without understanding them.
+- `rewind` owns timing, prediction and rollback. The game only knows how to save, load, advance and checksum itself.
+
+---
+
+## 4. The interface between rewind and the game (FROZEN)
+
+This lives in `rewind/src/api.rs`. Both of us build against it from day one. **Changing it needs agreement from both people.**
+
+```rust
+/// Implemented by any game that wants rollback.
+pub trait RollbackGame {
+    /// One player's input for one frame. Riposte uses a u16 bitmask.
+    type Input: Copy + PartialEq + Default + Serialize + DeserializeOwned;
+    /// A full copy of everything the simulation needs.
+    type State: Clone;
+
+    fn save(&self) -> Self::State;
+    fn load(&mut self, state: &Self::State);
+    /// Advance exactly one tick (1/60 s) using both players' inputs.
+    fn advance(&mut self, inputs: [Self::Input; 2]);
+    /// Deterministic hash of the current state, used for desync detection.
+    fn checksum(&self) -> u64;
+}
+
+/// How rewind sends and receives bytes. Swappable: in-memory, fake-latency, WebSocket.
+pub trait Transport {
+    fn send(&mut self, bytes: &[u8]);
+    fn poll(&mut self) -> Vec<Vec<u8>>; // non-blocking: all messages received since last poll
+}
+```
+
+How the game uses a session, once per 1/60 s tick:
+
+```rust
+session.add_local_input(local_input);
+for event in session.tick(&mut game) {   // rewind may load/advance the game several times here
+    match event {
+        Event::Desync { frame } => { /* log loudly */ }
+        Event::Stalled => { /* too far ahead of the opponent; skip this tick */ }
+        Event::Disconnected => { /* back to menu */ }
+    }
+}
+render(&game);
+```
+
+Riposte's input bitmask:
+
+| Bit | Button |
+|---|---|
+| 0 | LEFT |
+| 1 | RIGHT |
+| 2 | UP (jump) |
+| 3 | DOWN (crouch) |
+| 4 | LIGHT attack |
+| 5 | HEAVY attack |
+
+---
+
+## 5. How rollback works, tick by tick
+
+Config defaults: `input_delay = 2` frames, `max_prediction = 8` frames, `checksum_interval = 30` frames.
+
+Every tick, `P2PSession::tick` does the following:
+
+1. **Schedule local input.** The local input is assigned to frame `current + input_delay`. A small delay means fewer rollbacks.
+2. **Send.** All local inputs not yet acknowledged by the peer are sent in one message. Sending them redundantly means a lost packet is covered by the next one.
+3. **Receive.** Remote inputs are read from the transport. Each is compared with what was *predicted* for that frame. Prediction is simply "same as the last confirmed input".
+4. **Roll back if needed.** If any prediction was wrong, `F` is the earliest wrong frame. The session loads the snapshot for frame `F`, then re-runs `advance` from `F` up to the current frame with the corrected inputs, saving fresh snapshots along the way.
+5. **Stall if too far ahead.** If `current - last_confirmed_remote_frame > max_prediction`, the session does not advance, so it never predicts too far into the future.
+6. **Advance.** The session saves a snapshot of the current frame, then calls `advance([local, remote_or_predicted])`.
+7. **Desync check.** Every `checksum_interval` frames, once the frame is confirmed for both players, the checksum is sent. If the peer's differs, the session emits `Event::Desync`.
+
+The snapshot ring buffer holds at least `max_prediction + 2` states, since we never roll back further than that.
+
+**Sync test session:** this runs the game locally with no network, and every frame it rolls back N frames, resimulates, and asserts the checksums match the first run. If it passes, the game is deterministic. **The game must pass it before going online.**
+
+---
+
+## 6. Network protocol
+
+Serialization is `bincode` over binary WebSocket frames.
+
+**Peer to peer (opaque to the server):**
+```rust
+enum PeerMsg<I> {
+    Inputs { start_frame: u32, inputs: Vec<I>, ack_frame: u32 },
+    Checksum { frame: u32, hash: u64 },
+}
+```
+
+**Client to server and back:**
+```rust
+enum ClientMsg { CreateRoom, JoinRoom { code: String }, Relay(Vec<u8>) }
+enum ServerMsg { RoomCreated { code: String },
+                 MatchStart { player_index: u8, seed: u64 },
+                 Relay(Vec<u8>), PeerLeft }
+```
+
+The seed in `MatchStart` initializes the game's PRNG so both clients start identically.
+
+---
+
+## 7. Game simulation (riposte-game)
+
+**Determinism rules (non-negotiable):**
+- No `f32`/`f64` anywhere in `sim/`. Positions use **integer subpixels**: 1 pixel = 256 units, stored in `i32`.
+- No `HashMap`/`HashSet` iteration in the sim (use `Vec` or arrays).
+- No system time and no `thread_rng`. Randomness comes only from a xorshift PRNG stored in `GameState`.
+- The sim never reads anything from rendering or the window. The tick rate is fixed at 60/s.
+- Checksum uses FNV-1a over the state's fields (our own ~15-line implementation, so it's identical on native and WASM).
+
+**State sketch:**
+```rust
+#[derive(Clone)]
+struct GameState { frame: u32, fighters: [Fighter; 2], round: Round, rng: u64 }
+
+#[derive(Clone)]
+struct Fighter {
+    pos: (i32, i32), vel: (i32, i32), facing: i8,
+    health: i16, action: Action, action_frame: u16,
+    hitstun: u16,
+}
+
+enum Action { Idle, Walk, Jump, Crouch, Light, Heavy, Hitstun, Knockdown }
+```
+
+**Attacks** have frame data, with startup, active and recovery frames. Hitboxes exist only during active frames and collide with the opponent's hurtbox (AABB overlap). Hits apply damage, hitstun and knockback.
+
+**Stage:** logical 1280×720, flat floor, walls at both edges. Rendering scales this to the window.
+
+**Game feel** is render-only and never affects the sim: hitstop shown visually, screen shake, hit flashes, health bar animation.
+
+---
+
+## 8. Relay server (riposte-server)
+
+- `tokio` + `axum` with a WebSocket route `/ws`.
+- `CreateRoom` makes a 4-letter room code. `JoinRoom` with that code pairs the second player. The server then sends `MatchStart` to both with player indices 0 and 1 and a random seed.
+- After that, any `Relay(bytes)` from one player is forwarded unchanged to the other.
+- Disconnects send `PeerLeft` and close the room. Rooms idle for over 5 minutes are deleted.
+- Logging uses `tracing`. It's deployable as a single binary or Docker image to a free tier host. The browser needs `wss://` when the game page is served over HTTPS.
+
+---
+
+## 9. Dependencies
+
+| Crate | Used in | Why |
+|---|---|---|
+| macroquad | game | Window, input, 2D drawing; compiles to WASM easily |
+| quad-net | rewind (ws transport) | WebSocket client that works on native **and** WASM |
+| serde, bincode | rewind, server | Message serialization |
+| tokio, axum | server | Async runtime + WebSocket server |
+| thiserror / anyhow | libs / binaries | Error handling |
+| tracing, tracing-subscriber | server | Logs |
+
+Any new dependency must be justified in the session summary.
+
+**Known risk:** WebSocket support from WASM via `quad-net`. Do a spike early in milestone R6 and G7. Fallback: online play native-only for v1, with the browser build offering local 2-player.
+
+---
+
+## 10. Division of labour
+
+| | Aryaman | Friend (`<FRIEND>`) |
+|---|---|---|
+| Owns | `game/`, final integration, WASM, deployment | `rewind/`, `server/` |
+| Credits run out | Nov 5, 1:29 PM | Nov 4, evening |
+
+### Milestones
+
+**rewind + server (`<FRIEND>`)**
+- **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
+- **R2:** `SyncTestSession` + `examples/boxes.rs` toy game. *Needed by Aryaman for G5. Target: Sun Nov 1.*
+- **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair.
+- **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
+- **R5:** Checksum exchange, desync event, stall when too far ahead.
+- **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.
+- **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
+- **S2:** Disconnects, timeouts, logging, Dockerfile.
+
+**game (Aryaman)**
+- **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
+- **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
+- **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
+- **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
+- **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
+- **G6:** Game feel: hit flash, shake, hitstop visuals, tuning of frame data.
+- **G7:** Main menu (create room / join with code), WASM build.
+
+**Together**
+- **I1:** Online native vs native through the relay, tested on two laptops.
+- **I2:** Online in the browser.
+- **I3:** Deploy server + client, public link in README.
+
+### Schedule
+
+| Date | `<FRIEND>` | Aryaman |
+|---|---|---|
+| Fri Oct 30 (night) | Read DESIGN.md, R1 | Repo + workspace, G1 |
+| Sat Oct 31 | R2, R3 | G2, G3 |
+| Sun Nov 1 | R3, R4 | G3, G4 |
+| Mon Nov 2 | R5, S1 | G5 (sync test), G6 |
+| Tue Nov 3 | R6, S2 | G6, G7 |
+| Wed Nov 4 (day) | **I1 together**, then LEARNING.md + docs for rewind/server | **I1 together** |
+| Wed Nov 4 (night) to Thu Nov 5 1 PM | Credits expired | I2, I3, docs/frame-walkthrough.md, docs/exercises.md, README |
+
+Each person's last ~$15 goes to learning material before their credits expire (see section 12).
+
+---
+
+## 11. Git workflow
+
+- `main` always builds and passes `cargo test --workspace`.
+- One branch per milestone, e.g. `rewind/r3-p2p-session` or `game/g3-attacks`. Merge through a PR.
+- Each person reads the other's PRs. A quick skim is fine; the point is to learn both halves.
+- Any PR touching `rewind/src/api.rs` or the protocol enums needs explicit approval from both.
+- Commit messages explain **what and why**, because the history is part of the study material.
+
+---
+
+## 12. Learning deliverables
+
+These are produced before credits expire:
+- **LEARNING.md:** every concept (rollback, prediction, fixed-point, determinism, ring buffers, AABB, frame data, async relay…), each explained from first principles with the file/function where it lives.
+- **SETUP.md:** every setup step and command, explained, so the whole thing can be built and run without Claude.
+- **docs/frame-walkthrough.md:** one frame traced end to end: key press → bitmask → rewind → network → peer → rollback → render.
+- **docs/exercises.md:** small changes that prove understanding, e.g. "add a third attack", "change input_delay and observe rollbacks", "introduce a float and watch the sync test catch it".
