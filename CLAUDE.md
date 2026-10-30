@@ -14,7 +14,7 @@ Ownership is by milestone and file, not by crate.
 **Aryaman**
 - R3: `P2PSession` (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`)
 - R4: fake-network transport + convergence tests (`rewind/src/transport/fake.rs` and its tests)
-- G1, G2, G3, G4, G5, G7 (`game/`, including the basic drawing in `game/src/render/mod.rs`, but not Ram's G6 files)
+- G1, G2, G3, G4, G5, G7 (`game/`, including placeholder drawing and art integration in `game/src/render/mod.rs`, but not Ram's G6 files)
 - Integration, WASM, deployment
 
 **Ram**
@@ -36,6 +36,13 @@ This project exists so both authors can understand and explain every line in int
 3. Prefer simple, explicit code over clever code. Avoid macros and heavy generics unless clearly needed. Comments explain *why*, not *what*.
 4. Commit after each milestone with a message explaining what changed and why.
 5. End every session with a summary: what was built, which files to read first and in what order, and open questions.
+
+## Visuals: not Claude's job
+- Don't design graphics, art, sprites, colour schemes or the visual style. The humans source third-party models/art and decide how the game looks.
+- Focus on the game physics, simulation, netcode and software.
+- Drawing code is placeholder only: plain shapes and debug text, just enough to see and test the mechanics. Keep it minimal and easy to replace.
+- Help load or wire in third-party assets only when the task explicitly asks for it.
+- Art never changes gameplay: hitboxes, hurtboxes and positions come from the sim, and art is drawn on top of them.
 
 ## Determinism rules (everything inside game/src/sim/ and anything rewind resimulates)
 - No `f32`/`f64` in simulation state or logic. Use integer subpixels (1 px = 256 units, `i32`).

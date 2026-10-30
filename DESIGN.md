@@ -15,7 +15,7 @@ Riposte is a 2-player online fighting game written in Rust. Its multiplayer runs
 
 **Non-goals (v1)**
 - More than 2 players, spectators, replays, ranked matchmaking.
-- Art assets. Shapes and colours only, with polish going into game feel.
+- Original art made by Claude. Characters, stage and UI visuals come from third-party models/art chosen by Aryaman and Ram (see section 7, "Visuals"). Until then the game draws plain placeholder shapes.
 - More than one stage, or more than one character design (both players use the same moveset).
 
 ---
@@ -46,7 +46,7 @@ riposte/
 │       ├── main.rs       # window, menus, main loop
 │       ├── sim/          # deterministic simulation (NO floats)
 │       ├── render/       # drawing (floats allowed here only)
-│       │   ├── mod.rs    # shapes, HUD, health bars (Aryaman)
+│       │   ├── mod.rs    # placeholder shapes now, third-party art later (Aryaman)
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
 │       └── input.rs      # keyboard → input bitmask
 ├── server/               # WebSocket relay (crate: riposte-server)
@@ -213,6 +213,8 @@ enum Action { Idle, Walk, Jump, Crouch, Light, Heavy, Hitstun, Knockdown }
 
 **Game feel** is render-only and never affects the sim: hitstop shown visually, screen shake, hit flashes, health bar animation.
 
+**Visuals:** Claude does not design graphics, art or the visual style. The humans pick third-party models/art and integrate them into `render/`. Claude's work is the physics, simulation, netcode and the rest of the software. Until the art arrives, `render/` draws only plain placeholder shapes (grey boxes, debug text) so the mechanics can be seen and tested. Hitboxes, hurtboxes and positions stay defined in the sim in integer subpixels; art is drawn on top of them and never changes them.
+
 ---
 
 ## 8. Relay server (riposte-server)
@@ -248,7 +250,7 @@ Ownership is by milestone and file, not by crate.
 
 | | Aryaman | Ram |
 |---|---|---|
-| Owns | R3 (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`), R4 (`rewind/src/transport/fake.rs` + its tests), `game/` including basic drawing in `game/src/render/mod.rs`, final integration, WASM, deployment | R1 (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`), R2 (`rewind/src/session/synctest.rs`, `rewind/examples/boxes.rs`), R5, R6 (`rewind/src/transport/websocket.rs`), `server/`, G6 (new files under `game/src/render/`, e.g. `render/effects.rs`) |
+| Owns | R3 (`rewind/src/session/p2p.rs`, `rewind/src/snapshot.rs`), R4 (`rewind/src/transport/fake.rs` + its tests), `game/` including placeholder drawing and art integration in `game/src/render/mod.rs`, final integration, WASM, deployment | R1 (`rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`), R2 (`rewind/src/session/synctest.rs`, `rewind/examples/boxes.rs`), R5, R6 (`rewind/src/transport/websocket.rs`), `server/`, G6 (new files under `game/src/render/`, e.g. `render/effects.rs`) |
 | Credits run out | Nov 5, 1:29 PM | Nov 4, evening |
 
 ### Milestones
