@@ -1,0 +1,6 @@
+# A Cargo workspace: several crates built together with one Cargo.lock and
+# one target/ folder, so they share dependency versions and build output.
+[workspace]
+resolver = "2"
+# Ram adds "rewind" (R1) and "server" (S1) here when those crates are created.
+members = ["game"]

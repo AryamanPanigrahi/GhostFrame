@@ -1,0 +1,9 @@
+[package]
+name = "riposte-game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Window, keyboard and 2D drawing. Default features are off in 0.4, so the
+# audio backend (which needs ALSA on Linux) is not pulled in.
+macroquad = "0.4.16"
