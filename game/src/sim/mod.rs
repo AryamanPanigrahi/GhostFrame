@@ -2,6 +2,10 @@
 //! state and the same inputs, `advance` must produce the same result on every
 //! machine, because rollback re-runs it and both peers run it independently.
 
+pub mod fighter;
+
+use fighter::{Fighter, SUBPIXELS};
+
 /// One player's buttons for one tick, packed into bits (DESIGN.md section 4).
 /// A u16 is tiny to send over the network and cheap to compare.
 pub type Input = u16;
@@ -18,18 +22,44 @@ pub fn is_held(input: Input, button: Input) -> bool {
     input & button != 0
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameState {
     /// Number of ticks simulated so far. At 60 ticks/s this is also the clock.
     pub frame: u32,
     /// Inputs used on the most recent tick. G3 compares new inputs against
     /// these to tell "just pressed" from "still held".
     pub inputs: [Input; 2],
+    pub fighters: [Fighter; 2],
+}
+
+impl Default for GameState {
+    /// Round start: both fighters on the floor, 480 px apart, facing each other.
+    fn default() -> GameState {
+        GameState {
+            frame: 0,
+            inputs: [0, 0],
+            fighters: [
+                Fighter::new(400 * SUBPIXELS, 1),
+                Fighter::new(880 * SUBPIXELS, -1),
+            ],
+        }
+    }
 }
 
 impl GameState {
-    /// Advance exactly one tick (1/60 s). Fighters and physics arrive in G2.
+    /// Advance exactly one tick (1/60 s).
     pub fn advance(&mut self, inputs: [Input; 2]) {
+        // Both fighters turn using positions from the *start* of the tick,
+        // before either moves. That way updating player 0 first can't give
+        // player 0 an advantage: the result doesn't depend on update order.
+        let x0 = self.fighters[0].x;
+        let x1 = self.fighters[1].x;
+        self.fighters[0].face(x1);
+        self.fighters[1].face(x0);
+
+        self.fighters[0].step(inputs[0]);
+        self.fighters[1].step(inputs[1]);
+
         self.frame += 1;
         self.inputs = inputs;
     }
@@ -69,8 +99,27 @@ mod tests {
     }
 
     #[test]
+    fn each_player_moves_with_their_own_input() {
+        let mut state = GameState::default();
+        let start = state.clone();
+        state.advance([RIGHT, 0]);
+        assert!(state.fighters[0].x > start.fighters[0].x);
+        assert_eq!(state.fighters[1], start.fighters[1]);
+    }
+
+    #[test]
+    fn fighters_turn_around_after_crossing() {
+        let mut state = GameState::default();
+        // Put P1 to the right of P2 on the ground, as if they'd crossed.
+        state.fighters[0].x = 1000 * SUBPIXELS;
+        state.advance([0, 0]);
+        assert_eq!(state.fighters[0].facing, -1);
+        assert_eq!(state.fighters[1].facing, 1);
+    }
+
+    #[test]
     fn same_inputs_give_same_state() {
-        let inputs = [[LEFT, 0], [LEFT | LIGHT, DOWN], [0, HEAVY]];
+        let inputs = [[LEFT, 0], [LEFT | UP, DOWN], [0, HEAVY], [RIGHT, UP | LEFT]];
         let mut a = GameState::default();
         let mut b = GameState::default();
         for i in inputs {

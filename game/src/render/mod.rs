@@ -1,15 +1,16 @@
-//! PLACEHOLDER debug view: grey boxes and text, just enough to see that the
-//! tick loop and inputs work. The real look comes from third-party art and
+//! PLACEHOLDER debug view: grey boxes and text, just enough to see the
+//! movement and inputs work. The real look comes from third-party art and
 //! replaces this. Floats are fine here; this code never feeds back into the sim.
 
-use crate::sim::{is_held, GameState, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
+use crate::sim::fighter::{Fighter, FIGHTER_WIDTH, FLOOR_Y, SUBPIXELS};
+use crate::sim::{is_held, GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 use macroquad::prelude::*;
 
 /// The sim's stage is 1280×720 logical pixels (DESIGN.md section 7).
 const LOGICAL_W: f32 = 1280.0;
 const LOGICAL_H: f32 = 720.0;
 
-const BUTTONS: [(u16, &str); 6] = [
+const BUTTONS: [(Input, &str); 6] = [
     (LEFT, "L"),
     (RIGHT, "R"),
     (UP, "U"),
@@ -62,41 +63,52 @@ pub fn draw(game: &GameState) {
     let view = View::for_window();
     view.rect(0.0, 0.0, LOGICAL_W, LOGICAL_H, DARKGRAY);
 
-    view.text(
-        &format!("sim frame {}", game.frame),
-        40.0,
-        60.0,
-        40.0,
-        WHITE,
-    );
-    view.text(
-        &format!("sim seconds {}", game.frame / 60),
-        40.0,
-        100.0,
-        40.0,
-        WHITE,
-    );
-    view.text(
-        &format!("render fps {}", get_fps()),
-        40.0,
-        140.0,
-        40.0,
-        GRAY,
-    );
+    let floor_y = px(FLOOR_Y);
+    view.rect(0.0, floor_y, LOGICAL_W, LOGICAL_H - floor_y, GRAY);
 
-    for player in 0..2 {
-        let x = 40.0 + player as f32 * 640.0;
-        let label = format!("P{}", player + 1);
-        view.text(&label, x, 260.0, 40.0, WHITE);
-        for (i, (button, name)) in BUTTONS.iter().enumerate() {
-            let bx = x + i as f32 * 90.0;
-            let color = if is_held(game.inputs[player], *button) {
-                LIGHTGRAY
-            } else {
-                GRAY
-            };
-            view.rect(bx, 290.0, 80.0, 80.0, color);
-            view.text(name, bx + 20.0, 340.0, 32.0, BLACK);
-        }
+    for (player, fighter) in game.fighters.iter().enumerate() {
+        draw_fighter(&view, player, fighter);
+        draw_held_buttons(&view, player, game.inputs[player]);
+    }
+
+    let debug = format!("frame {}   render fps {}", game.frame, get_fps());
+    view.text(&debug, 500.0, 30.0, 24.0, WHITE);
+}
+
+/// Sim units (integer subpixels) to logical pixels. This is the boundary
+/// where integers become floats; nothing here goes back into the sim.
+fn px(subpixels: i32) -> f32 {
+    subpixels as f32 / SUBPIXELS as f32
+}
+
+/// A box the size of the fighter, standing on its feet position, with a
+/// notch on the side it faces.
+fn draw_fighter(view: &View, player: usize, fighter: &Fighter) {
+    let w = px(FIGHTER_WIDTH);
+    let h = px(fighter.height());
+    let left = px(fighter.x) - w / 2.0;
+    let top = px(fighter.y) - h;
+    view.rect(left, top, w, h, LIGHTGRAY);
+
+    let notch_x = if fighter.facing > 0 {
+        left + w - 10.0
+    } else {
+        left
+    };
+    view.rect(notch_x, top + 20.0, 10.0, 20.0, BLACK);
+
+    let label = format!("P{} {:?}", player + 1, fighter.action);
+    view.text(&label, left, top - 10.0, 24.0, WHITE);
+}
+
+/// Which buttons this player held on the last tick, top-left for P1 and
+/// top-right for P2.
+fn draw_held_buttons(view: &View, player: usize, input: Input) {
+    let x0 = if player == 0 { 20.0 } else { 1000.0 };
+    for (i, (button, name)) in BUTTONS.iter().enumerate() {
+        let x = x0 + i as f32 * 44.0;
+        let color = if is_held(input, *button) { WHITE } else { GRAY };
+        view.rect(x, 50.0, 40.0, 40.0, color);
+        view.text(name, x + 6.0, 78.0, 22.0, BLACK);
     }
 }

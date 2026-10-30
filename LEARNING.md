@@ -76,7 +76,7 @@ Every concept in Riposte, explained from first principles, with where it lives i
 
 **Why:** Each client runs the full game and only inputs are exchanged. If the two sims ever compute different results from the same inputs, the players see different games (a *desync*). Rollback also re-runs past ticks and assumes it gets the same answer as before. Floats, hash-map iteration order, system time and unseeded randomness can all differ between machines or runs, so they're banned inside `sim/` (see CLAUDE.md).
 
-**Where:** `game/src/sim/mod.rs`. For now `GameState` only holds `frame` and the last `inputs`; fighters arrive in G2. The test `same_inputs_give_same_state` is a first, tiny determinism check; G5's `SyncTestSession` is the real one.
+**Where:** `game/src/sim/mod.rs` (`GameState::advance`) and `game/src/sim/fighter.rs`. The test `same_inputs_give_same_state` is a first, tiny determinism check; G5's `SyncTestSession` is the real one.
 
 ---
 
@@ -117,3 +117,73 @@ Every concept in Riposte, explained from first principles, with where it lives i
 **Why:** In a browser (WASM) a program can't run an endless `loop`; it has to return control to the browser every frame or the page freezes. `await` is the point where macroquad hands control back and resumes us on the next frame. Natively it works the same way, so one loop works for both targets (G7).
 
 **Where:** `game/src/main.rs`, `main` and `window_conf`.
+
+---
+
+## Fixed-point numbers (integer subpixels)
+
+**What:** Positions and speeds are `i32` counts of *subpixels*, where 1 pixel = 256 subpixels. A walk speed of 4 px/tick is stored as 1024; gravity of 0.75 px/tick² is stored as 192. The decimal point is "fixed" at 8 bits from the right, so this is called *fixed-point*.
+
+**Why:** Floats can give slightly different answers on different CPUs, compilers or WASM, depending on rounding and instruction choices. In a rollback game a one-bit difference grows into a full desync. Integer add, subtract and compare are exact and identical everywhere. 256 subpixels per pixel gives smooth fractional speeds while leaving `i32` plenty of range (about 8 million pixels).
+
+**Where:** `game/src/sim/fighter.rs` (`SUBPIXELS` and every constant built from it). `game/src/render/mod.rs`, `px()`, is the one place subpixels become floats, and only for drawing.
+
+---
+
+## Stage coordinates (y down, feet anchor)
+
+**What:** x grows to the right, y grows *downward* (like the screen), so "up" is negative. A fighter's `(x, y)` is the centre of its feet. The floor is `FLOOR_Y` = 640 px, and the stage is 1280 px wide.
+
+**Why:** Matching screen coordinates means the renderer needs no flip. Anchoring at the feet means standing and crouching only change the height, not the position, and "on the floor" is simply `y == FLOOR_Y`.
+
+**Where:** `game/src/sim/fighter.rs` (`FLOOR_Y`, `STAGE_WIDTH`, `Fighter.x/.y`). `game/src/render/mod.rs` (`draw_fighter` draws the box upward from the feet).
+
+---
+
+## Velocity, gravity and the jump arc
+
+**What:** Each tick: position += velocity, then (in the air) velocity.y += gravity. Takeoff sets `vy = JUMP_VELOCITY` (−15 px/tick). Gravity adds 0.75 px/tick each tick, so the fighter slows, stops at the peak, and falls back. When `y` reaches the floor it is clamped and the fighter lands.
+
+**Why:** Constant acceleration gives a parabola, which looks and feels natural. Doing it with integers means the arc is *exactly* the same every time: the jump lasts exactly 41 ticks and peaks at exactly 157.5 px (height after n ticks = 3840n − 96n(n−1) subpixels). The tests check those exact numbers. "Move, then add gravity" is the order chosen; the other order gives a slightly different (also exact) arc, so the order must never change silently.
+
+**Where:** `game/src/sim/fighter.rs`, `Fighter::step`, `JUMP_VELOCITY`, `GRAVITY`. Test: `jump_leaves_floor_and_lands_after_jump_ticks`.
+
+---
+
+## Ground control vs no air control
+
+**What:** Input is read only while on the ground. UP jumps (with the horizontal speed fixed by LEFT/RIGHT at takeoff), DOWN crouches (no walking), LEFT/RIGHT walk, nothing held means idle. Once airborne, input is ignored until landing.
+
+**Why:** This is how classic fighting games work: a jump is a commitment. The opponent can see where you'll land and punish it, which is a core part of the game's strategy. Walking backward is slower than forward (3 vs 4 px/tick) so retreating has a cost.
+
+**Where:** `game/src/sim/fighter.rs`, `Fighter::ground_control`. Tests: `no_air_control`, `walking_forward_is_faster_than_back`, `crouch_stops_walking`.
+
+---
+
+## SOCD cleaning (left + right at once)
+
+**What:** SOCD means "simultaneous opposing cardinal directions": holding LEFT and RIGHT (or UP and DOWN) at the same time. We treat each opposite pair as neutral: `horizontal = right − left`, which is 0 when both are held.
+
+**Why:** On a keyboard it's easy to hold both. Without a rule, the result would depend on which `if` happens to be checked first, which is an accident rather than a decision. Neutral is a common, explicit choice.
+
+**Where:** `game/src/sim/fighter.rs`, `horizontal` and `vertical`. Test: `left_and_right_together_is_neutral`.
+
+---
+
+## Walls (clamping)
+
+**What:** After moving, `x` is clamped to `[half width, stage width − half width]`, so the fighter's box never leaves the stage.
+
+**Why:** Clamping (instead of bouncing) stops the fighter dead at the wall, which is what fighting games do. It also matters later: being "in the corner" is a key situation in G3, because knockback can't push you further.
+
+**Where:** `game/src/sim/fighter.rs`, the end of `Fighter::step`. Test: `walls_stop_fighters_at_both_edges`.
+
+---
+
+## Facing, and why update order must not matter
+
+**What:** On the ground, each fighter turns to face the opponent's x. In the air facing is frozen, so jumping over someone doesn't flip you mid-jump. If both x values are equal, the old facing is kept.
+
+**Order independence:** `GameState::advance` reads *both* positions first, turns both fighters, and only then moves them. If P1 moved first and P2 then turned based on P1's new position, P1 would always see slightly older information than P2. Reading everything at the start of the tick makes the result the same whichever player is updated first.
+
+**Where:** `game/src/sim/fighter.rs`, `Fighter::face`. `game/src/sim/mod.rs`, `GameState::advance`. Tests: `faces_opponent_on_ground_only`, `fighters_turn_around_after_crossing`.
