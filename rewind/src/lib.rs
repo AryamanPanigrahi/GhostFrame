@@ -10,6 +10,8 @@
 
 pub mod api;
 pub mod input_queue;
+pub mod session;
 
 pub use api::{Event, Frame, RollbackGame, Transport};
 pub use input_queue::{AddOutcome, InputQueue, InputStatus};
+pub use session::synctest::{SyncTestError, SyncTestSession};

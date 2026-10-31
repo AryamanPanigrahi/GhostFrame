@@ -96,6 +96,16 @@ Test only the rollback library:
 cargo test -p rewind
 ```
 
+Run rewind's toy game under the sync test (and the deliberately broken version, which should fail with a desync):
+
+```bash
+cargo run -p rewind --example boxes
+```
+
+```bash
+cargo run -p rewind --example boxes -- --broken
+```
+
 The first build downloads and compiles macroquad and takes a minute; later builds are incremental.
 
 Controls for local 2-player:
