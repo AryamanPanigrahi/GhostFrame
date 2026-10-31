@@ -384,3 +384,38 @@ Each pause has a `timer` that counts down once per tick; at 0, `tick_round` move
 **Why:** It's one codebase for desktop and browser, and the sim is integer-only, so it gives identical results on both. That's essential for a native player against a browser player. The JS bundle must come from the *same* macroquad version as the Rust side, because the two halves call each other by name.
 
 **Where:** `web/index.html`, `web/mq_js_bundle.js`, `scripts/build-web.sh`. Steps in SETUP.md section 5.
+
+---
+
+## Rollback netcode (the big idea)
+
+**What:** Each player's machine runs the whole game. Only inputs travel over the network. When the opponent's input for a frame hasn't arrived yet, we don't wait: we *guess* it and keep playing. When the real input arrives, if the guess was wrong we *roll back*: load the saved state from that frame, and quickly re-run every frame since with the corrected input, all within one tick, before drawing.
+
+**Why:** Waiting for the opponent's input every frame (delay-based netcode) makes the game feel as laggy as the connection. Guessing makes your own inputs respond instantly. Most guesses are right, because players hold the same buttons for many frames in a row, so rollbacks are rare and short. The cost is that the game must be able to save, load and re-run itself exactly, which is why the sim is deterministic.
+
+**Where:** the trait every game implements is `RollbackGame` in `rewind/src/api.rs`. The rollback loop itself is `P2PSession` (R3, `rewind/src/session/p2p.rs`).
+
+---
+
+## Traits and associated types (`RollbackGame`, `Transport`)
+
+**What:** A *trait* is a list of methods a type promises to have, like an interface. `RollbackGame` says "a game can `save`, `load`, `advance` and `checksum`". An *associated type* is a type the implementer picks: `type Input` and `type State`. Riposte will say `type Input = u16` and `type State = GameState`; the `boxes` toy game picks its own.
+
+**Why:** It's what makes rewind game-agnostic. The session code is written once against the trait and works with any game that implements it. The bounds on `Input` (`Copy + PartialEq + Default + Serialize + DeserializeOwned`) are exactly what rollback needs: copy it around freely, compare a guess with the real input, have a "nothing pressed" value to guess before any input exists, and send it over the network. `Transport` does the same for networking: `send` bytes, `poll` for received bytes, so the session doesn't care if it's an in-memory pair (tests), a fake laggy network (R4) or a WebSocket (R6).
+
+**Where:** `rewind/src/api.rs`. This file is frozen: changing it needs both authors to agree (DESIGN.md section 4).
+
+---
+
+## Input prediction and the InputQueue
+
+**What:** `InputQueue` holds one player's confirmed inputs in frame order. Asking it for a frame it doesn't have yet returns a *prediction*: the last confirmed input (or "nothing pressed" if there's none). It remembers which frames it predicted, and when the real input for one of them arrives, it compares the two. The earliest frame where the guess was wrong is reported by `first_incorrect_frame`: that's the frame the session rolls back to.
+
+**Why:**
+- *Predict "same as last"* because it's simple and usually right: at 60 frames per second, buttons change rarely compared to how often they stay the same.
+- *Only the earliest wrong frame matters*, because rolling back to it re-runs every later frame anyway.
+- *Inputs must arrive in order* (`AddOutcome::Gap` otherwise). A hole would be a frame we could never confirm. The protocol avoids holes by resending every unacknowledged input in each message, which is also why repeats (`AddOutcome::AlreadyHad`) are normal and ignored.
+- *`reset_prediction`* is called when the session rolls back. The old guesses are about to be thrown away and re-made with newer information, so comparing against them later would report rollbacks that aren't needed.
+- *`discard_before`* drops inputs no rollback can reach any more (older than `max_prediction` frames), so memory doesn't grow for the whole match. A `VecDeque` (a double-ended queue) makes dropping from the front cheap.
+
+**Where:** `rewind/src/input_queue.rs` (`InputQueue::add_input`, `input`, `first_incorrect_frame`, `reset_prediction`, `discard_before`). Tests in the same file: `predicts_last_confirmed_input`, `wrong_prediction_is_flagged`, `earliest_wrong_frame_is_kept`, `reset_clears_predictions_and_the_flag`.
