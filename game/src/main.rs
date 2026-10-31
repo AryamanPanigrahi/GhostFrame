@@ -34,6 +34,7 @@ async fn main() {
     let mut session = LocalSession::default();
     let mut clock = FixedClock::default();
     let mut last = now_micros();
+    let mut effects = render::effects::Effects::default();
 
     loop {
         // One render frame: work out how many 1/60 s ticks are due, run them,
@@ -50,7 +51,7 @@ async fn main() {
             session.tick(&mut game);
         }
 
-        render::draw(&game);
+        render::draw(&game, &mut effects);
         next_frame().await;
     }
 }

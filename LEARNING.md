@@ -279,3 +279,14 @@ During hitstun the knockback speed shrinks by `KNOCKBACK_FRICTION` each tick, so
 **Why:** Frame advantage decides who has the initiative after every exchange, which is the core of fighting-game strategy. It falls out of the frame data, which is why the numbers in `attack.rs` matter more than they look.
 
 **Where:** the frame data in `game/src/sim/attack.rs`. Test: `frame_advantage_on_hit` in `game/src/sim/mod.rs` checks both numbers.
+
+
+---
+
+## Game feel: render-only effects
+
+**What:** Hit flash and screen shake make a hit *feel* like something, but they live entirely in `render/`. `Effects` watches the sim's state each draw: when a fighter's health drops, a hit just landed, so that fighter flashes and the view shakes, harder and longer for bigger damage. Timers count down in sim ticks (the change in `game.frame`), not wall-clock time, so the effect lasts the same on a 60 Hz or a 240 Hz monitor, and redrawing the same tick twice doesn't fade it.
+
+**Why:** The sim must stay deterministic and identical on both peers, and rollback re-runs it. If effects were in the sim they would be part of the checksum and could desync. Reading the state and never writing to it keeps feel and fairness separate. A frame counter going backwards (restart) or health going up is treated as a new baseline, never as damage.
+
+**Where:** `game/src/render/effects.rs` (`Effects::observe`, `flash`, `shake_offset`), called from `draw` in `game/src/render/mod.rs`. Tests: the `tests` module in `effects.rs`.

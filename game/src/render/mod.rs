@@ -7,6 +7,9 @@ use crate::sim::rect::Rect;
 use crate::sim::{is_held, GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 use macroquad::prelude::*;
 
+pub mod effects;
+use effects::Effects;
+
 /// The sim's stage is 1280×720 logical pixels (DESIGN.md section 7).
 const LOGICAL_W: f32 = 1280.0;
 const LOGICAL_H: f32 = 720.0;
@@ -29,12 +32,12 @@ struct View {
 }
 
 impl View {
-    fn for_window() -> View {
+    fn for_window(shake: (f32, f32)) -> View {
         let scale = (screen_width() / LOGICAL_W).min(screen_height() / LOGICAL_H);
         View {
             scale,
-            offset_x: (screen_width() - LOGICAL_W * scale) / 2.0,
-            offset_y: (screen_height() - LOGICAL_H * scale) / 2.0,
+            offset_x: (screen_width() - LOGICAL_W * scale) / 2.0 + shake.0 * scale,
+            offset_y: (screen_height() - LOGICAL_H * scale) / 2.0 + shake.1 * scale,
         }
     }
 
@@ -77,16 +80,17 @@ impl View {
     }
 }
 
-pub fn draw(game: &GameState) {
+pub fn draw(game: &GameState, effects: &mut Effects) {
     clear_background(BLACK);
-    let view = View::for_window();
+    effects.observe(game);
+    let view = View::for_window(effects.shake_offset());
     view.rect(0.0, 0.0, LOGICAL_W, LOGICAL_H, DARKGRAY);
 
     let floor_y = px(FLOOR_Y);
     view.rect(0.0, floor_y, LOGICAL_W, LOGICAL_H - floor_y, GRAY);
 
     for (player, fighter) in game.fighters.iter().enumerate() {
-        draw_fighter(&view, player, fighter);
+        draw_fighter(&view, player, fighter, effects.flash(player));
         draw_held_buttons(&view, player, game.inputs[player]);
     }
 
@@ -103,9 +107,9 @@ fn px(subpixels: i32) -> f32 {
 /// The fighter drawn as its hurtbox, with a notch on the side it faces and
 /// an outline of its hitbox while an attack is active. Drawing the sim's own
 /// boxes means what you see is exactly what the hit detection uses.
-fn draw_fighter(view: &View, player: usize, fighter: &Fighter) {
+fn draw_fighter(view: &View, player: usize, fighter: &Fighter, flash: f32) {
     let body = fighter.hurtbox();
-    view.sim_rect(body, LIGHTGRAY, true);
+    view.sim_rect(body, flash_tint(LIGHTGRAY, flash), true);
     if let Some(hitbox) = fighter.active_hitbox() {
         view.sim_rect(hitbox, RED, false);
     }
@@ -134,4 +138,14 @@ fn draw_held_buttons(view: &View, player: usize, input: Input) {
         view.rect(x, 50.0, 40.0, 40.0, color);
         view.text(name, x + 6.0, 78.0, 22.0, BLACK);
     }
+}
+
+/// Blends ase toward red by mount (0.0 to 1.0) for the hit flash.
+fn flash_tint(base: Color, amount: f32) -> Color {
+    Color::new(
+        base.r + (RED.r - base.r) * amount,
+        base.g + (RED.g - base.g) * amount,
+        base.b + (RED.b - base.b) * amount,
+        base.a,
+    )
 }

@@ -14,7 +14,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G3: attacks, frame data, hitboxes, damage, hitstun, knockback | Aryaman | ✅ Done |
 | G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | Not started |
 | G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (needs R2) |
-| G6: game feel (render-only) | Ram | Not started |
+| G6: game feel (render-only) | Ram | Partly done: flash + shake (hitstop visuals and frame-data tuning not done, see below) |
 | G7: menu, WASM build | Aryaman | Not started |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | Not started |
 | R2: `SyncTestSession` + `boxes` example | Ram | Not started |
@@ -25,7 +25,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | S1, S2: relay server | Ram | Not started |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 45 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
+**Tests:** 54 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
 
 ---
 
@@ -120,6 +120,26 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 **Tests:** AABB overlap, active frames, mirroring, press-not-hold, attack duration, hitstun countdown, knockback, air hit, health floor, first-active-frame hit, one hit per swing, whiff, crouch vs light/heavy, trade, interrupt, exact frame advantage (+4 / −4).
 
 **Not built yet:** blocking, air attacks, pushboxes (fighters can walk through each other), KO and rounds (G4).
+
+---
+
+## G6: game feel (render-only)
+
+**Gist:** A hit now flashes the defender red and shakes the view, harder and longer for bigger hits (light: 5 px for 3 ticks; heavy: 12 px for 8 ticks). `Effects` only reads `GameState`; it never writes to it.
+
+**Files:** `game/src/render/effects.rs` (new), plus small wiring in `game/src/render/mod.rs` (`draw` takes `&mut Effects`, the view takes a shake offset, `flash_tint`) and `game/src/main.rs` (creates the `Effects`). The `mod.rs` and `main.rs` edits touch Aryaman's files, as DESIGN.md says G6 is "called from render/mod.rs".
+
+**Decisions:**
+- Hits are detected by a health drop between two draws, so the sim needed no changes and no hit event.
+- Timers count sim ticks (frame delta), so they don't depend on frame rate.
+- Frame going backwards or health rising resets the baseline without firing effects.
+
+**Tests:** 9 in `effects.rs`: no hit, defender-only flash, fade in ticks, redraw doesn't fade, heavy > light, shake jitter and end, small hit doesn't cut a big shake, restart not mistaken for damage, health rising.
+
+**Not done:**
+- **Hitstop visuals:** the sim has no hitstop, so freezing the picture in render would show something the sim doesn't do. If wanted, hitstop should be added to the sim first (Aryaman's files).
+- **Health-bar animation:** health bars don't exist yet (G4).
+- **Frame-data tuning:** needs edits to `sim/attack.rs`, which is Aryaman's. Needs a playtest and agreement first.
 
 ---
 
