@@ -51,7 +51,10 @@ riposte/
 │       │   ├── mod.rs    # Input bits, GameState, advance, hit resolution
 │       │   ├── fighter.rs # movement + action state machine
 │       │   ├── attack.rs # frame data and hitboxes
-│       │   └── rect.rs   # AABB overlap
+│       │   ├── rect.rs   # AABB overlap
+│       │   ├── round.rs  # round/match phases and timings
+│       │   ├── rng.rs    # seeded xorshift64 PRNG
+│       │   └── checksum.rs # FNV-1a hash for desync detection
 │       ├── render/       # drawing (floats allowed here only)
 │       │   ├── mod.rs    # placeholder shapes now, third-party art later (Aryaman)
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
@@ -199,14 +202,17 @@ The seed in `MatchStart` initializes the game's PRNG so both clients start ident
 - The sim never reads anything from rendering or the window. The tick rate is fixed at 60/s.
 - Checksum uses FNV-1a over the state's fields (our own ~15-line implementation, so it's identical on native and WASM).
 
-**State, as built (after G3):**
+**State, as built (after G4):**
 ```rust
 struct GameState {
     frame: u32,
     inputs: [Input; 2],       // last tick's inputs, for "just pressed"
     fighters: [Fighter; 2],
-    // G4 adds: round: Round, rng: u64
+    round: Round,             // number, wins [u8; 2], phase, timer
+    rng: Rng,                 // xorshift64 state, seeded by GameState::new(seed)
 }
+
+enum Phase { Ready, Fight, RoundOver { winner: Option<u8> }, MatchOver { winner: u8 } }
 
 struct Fighter {
     x: i32, y: i32,           // centre of the feet, subpixels, y down
@@ -219,15 +225,16 @@ struct Fighter {
     attack_connected: bool,   // this swing already hit
 }
 
-enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun }  // G4 may add Knockdown
+enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun, Knockdown }
 ```
 
 **Tick order** (`GameState::advance`):
+0. Outside `Fight`, both inputs are replaced with 0.
 1. Both fighters turn to face each other, using start-of-tick positions.
 2. Presses are worked out as `held & !last_tick`.
 3. Both fighters step: timers, then input if actionable, then movement, floor and walls.
-4. Both hits are checked.
-5. Both hits are applied.
+4. During `Fight` only, both hits are checked, then applied, then KO is checked.
+5. The round timer ticks, which may change phase or reset the fighters.
 6. `frame` and `inputs` are stored.
 
 Reading before writing keeps the result independent of which player is updated first.
@@ -245,7 +252,15 @@ Reading before writing keeps the result independent of which player is updated f
 | Light | 4 | 3 | 8 | 50 | 15 | 3 px/tick | high (130–160 px) | +4 |
 | Heavy | 10 | 4 | 20 | 120 | 20 | 6 px/tick | mid (60–110 px) | −4 |
 
-**Not built yet:** blocking, air attacks and pushboxes (see PROGRESS.md, open questions).
+**Rounds:**
+- Best of 3. READY 1 s (input ignored), then fight.
+- KO gives 2 s of round over, then the next round with fighters reset and the score kept.
+- 2 wins gives 4 s of match over, then a new match.
+- A double KO is a draw and the round is replayed.
+
+**Checksum:** FNV-1a over every field of `GameState`, in fixed order, little-endian, with explicit enum tags (`GameState::checksum`).
+
+**Not built yet:** blocking, round timer, air attacks and pushboxes (see PROGRESS.md, open questions).
 
 **Stage:** logical 1280×720, flat floor at y = 640 px, walls at both edges. Rendering scales this to the window.
 
@@ -305,7 +320,7 @@ Ownership is by milestone and file, not by crate.
 - ✅ **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
 - ✅ **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
 - ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
-- **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
+- ✅ **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
 - **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
 - **G7:** Main menu (create room / join with code), WASM build.
 

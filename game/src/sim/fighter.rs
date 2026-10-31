@@ -3,6 +3,7 @@
 //! are integer subpixels.
 
 use super::attack::{Attack, HEAVY_ATTACK, LIGHT_ATTACK};
+use super::checksum::Fnv1a;
 use super::rect::Rect;
 use super::{is_held, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 
@@ -48,6 +49,25 @@ pub enum Action {
     Light,
     Heavy,
     Hitstun,
+    /// KO'd: down for the rest of the round, no input.
+    Knockdown,
+}
+
+impl Action {
+    /// A fixed number per variant for the checksum. Written out rather than
+    /// using `as u8`, so reordering the enum can't silently change hashes.
+    fn tag(self) -> u8 {
+        match self {
+            Action::Idle => 0,
+            Action::Walk => 1,
+            Action::Crouch => 2,
+            Action::Jump => 3,
+            Action::Light => 4,
+            Action::Heavy => 5,
+            Action::Hitstun => 6,
+            Action::Knockdown => 7,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -190,6 +210,8 @@ impl Fighter {
             if self.action_frame >= attack.total() {
                 self.action = Action::Idle;
             }
+        } else if self.action == Action::Knockdown {
+            self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION);
         } else if self.action == Action::Hitstun {
             self.hitstun -= 1;
             self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION);
@@ -248,6 +270,41 @@ impl Fighter {
         self.action = Action::Hitstun;
         self.hitstun = attack.hitstun;
         self.vx = from_facing as i32 * attack.knockback;
+    }
+
+    /// Health reached 0. Keeps any knockback slide; stays down until the
+    /// next round resets the fighter.
+    pub fn knock_down(&mut self) {
+        self.action = Action::Knockdown;
+        self.hitstun = 0;
+    }
+
+    /// Feed every field into the hash. The destructuring `let` lists all
+    /// fields by name, so adding a field to `Fighter` without hashing it is
+    /// a compile error instead of a silent gap in desync detection.
+    pub fn hash_into(&self, h: &mut Fnv1a) {
+        let Fighter {
+            x,
+            y,
+            vx,
+            vy,
+            facing,
+            action,
+            action_frame,
+            hitstun,
+            health,
+            attack_connected,
+        } = *self;
+        h.write_i32(x);
+        h.write_i32(y);
+        h.write_i32(vx);
+        h.write_i32(vy);
+        h.write_i8(facing);
+        h.write_u8(action.tag());
+        h.write_u16(action_frame);
+        h.write_u16(hitstun);
+        h.write_i16(health);
+        h.write_bool(attack_connected);
     }
 
     fn land(&mut self) {
@@ -484,5 +541,16 @@ mod tests {
         f.health = 10;
         f.take_hit(LIGHT_ATTACK, 1);
         assert_eq!(f.health, 0);
+    }
+
+    #[test]
+    fn knocked_down_fighter_cannot_act_or_turn() {
+        let mut f = Fighter::new(MID, 1);
+        f.knock_down();
+        f.face(MID - 100);
+        f.step(LEFT | UP, LIGHT);
+        assert_eq!(f.action, Action::Knockdown);
+        assert_eq!(f.facing, 1);
+        assert_eq!(f.x, MID);
     }
 }

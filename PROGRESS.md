@@ -12,7 +12,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G1: window, 60 Hz loop, input bitmask, LocalSession | Aryaman | ✅ Done |
 | G2: fixed-point movement | Aryaman | ✅ Done |
 | G3: attacks, frame data, hitboxes, damage, hitstun, knockback | Aryaman | ✅ Done |
-| G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | Not started |
+| G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | ✅ Done |
 | G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (needs R2) |
 | G6: game feel (render-only) | Ram | Not started |
 | G7: menu, WASM build | Aryaman | Not started |
@@ -25,7 +25,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | S1, S2: relay server | Ram | Not started |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 45 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
+**Tests:** 62 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
 
 ---
 
@@ -40,7 +40,12 @@ cargo run -p riposte-game
 | P1 | A / D | W | S | F | G |
 | P2 | ← / → | ↑ | ↓ | K | L |
 
-The screen is a placeholder debug view: grey boxes are the fighters' hurtboxes, a black notch shows facing, a red outline is an active hitbox, and each label shows the current action and health. Real visuals will come from third-party art.
+The screen is a placeholder debug view. Real visuals will come from third-party art.
+- Grey boxes are the fighters' hurtboxes, and a black notch shows facing.
+- A red outline is an active hitbox.
+- Each fighter's label shows its current action and health.
+- Along the top are health bars, round wins and the round number, with a banner for READY, K.O. and the match winner.
+- The bottom line shows the frame number and the state checksum.
 
 ---
 
@@ -119,14 +124,42 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 
 **Tests:** AABB overlap, active frames, mirroring, press-not-hold, attack duration, hitstun countdown, knockback, air hit, health floor, first-active-frame hit, one hit per swing, whiff, crouch vs light/heavy, trade, interrupt, exact frame advantage (+4 / −4).
 
-**Not built yet:** blocking, air attacks, pushboxes (fighters can walk through each other), KO and rounds (G4).
+**Not built yet:** blocking, air attacks, pushboxes (fighters can walk through each other).
+
+---
+
+## G4: rounds, health bars, KO, reset, PRNG + FNV checksum
+
+**Gist:**
+- A match is best of 3. Each round opens with a 1 s READY pause (input ignored), then the fight.
+- At 0 health the loser is knocked down and the winner scores. After 2 s the next round starts with fighters reset and the score kept.
+- At 2 wins the match winner shows for 4 s, then a fresh match starts. A double KO is a draw and the round is replayed.
+- The state now holds a seeded xorshift64 generator and has an FNV-1a checksum over every field, ready for rewind's sync test (G5) and desync detection.
+
+**Files:** `game/src/sim/round.rs` (`Phase`, `Round`, timings), `game/src/sim/rng.rs` (`Rng`), `game/src/sim/checksum.rs` (`Fnv1a`), `game/src/sim/mod.rs` (`GameState::new(seed)`, input gating, `check_ko`, `tick_round`, `checksum`), `game/src/sim/fighter.rs` (`Action::Knockdown`, `knock_down`, `hash_into`), `game/src/render/mod.rs` (placeholder health bars, score, banners, checksum), `game/src/main.rs` (`LOCAL_SEED`).
+
+**Numbers:**
+- Pauses: READY 60 ticks (1 s), round over 120 (2 s), match over 240 (4 s).
+- 2 wins take the match. Health is 1000.
+
+**Decisions:**
+- Hits are only checked during `Fight`, so an attack still active after a KO can't hit the downed fighter.
+- Physics keeps running in pauses, so a fighter KO'd in the air still lands.
+- A new round resets fighters but keeps the frame counter, the random generator and the score.
+- The checksum names every field through a destructuring `let`, so forgetting a new field won't compile. Enums use explicit tags and numbers are little-endian, so hashes are identical on every platform.
+- Nothing uses the random generator yet. It's in the state now so checksums and rollback already cover it.
+
+**Tests:** xorshift (same seed same sequence, zero seed, known value), FNV-1a (official test vectors, byte order), ready pause, KO and scoring, input ignored after KO, round reset, pause lengths, match win and new match, double KO, knockdown, checksum equality, and that changing any field or swapping the players changes the checksum.
+
+**Not built yet:** round timer (time-out), blocking, pushboxes, air attacks.
 
 ---
 
 ## Open questions
 
-- **Blocking** isn't in any milestone. Suggestion: hold back to block, added in G4.
-- **Pushboxes** (body collision): fighters can currently overlap. G4, or a small step of its own?
+- **Blocking** isn't in any milestone, so G4 doesn't have it. Suggestion: hold back to block, as a small step before G5.
+- **Round timer:** there's no time-out yet, so a round only ends by KO. Should rounds have one (e.g. 99 s, most health wins)?
+- **Pushboxes** (body collision): fighters can currently overlap. A small step of its own?
 - **Air attacks:** pressing an attack mid-jump does nothing today.
 - **Tuning:** all movement and frame-data numbers are first guesses. Ram's G6 includes frame-data tuning.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.

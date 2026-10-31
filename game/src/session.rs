@@ -27,12 +27,12 @@ impl LocalSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::{HEAVY, LEFT};
+    use crate::sim::{fighting_state, HEAVY, LEFT};
 
     #[test]
     fn inputs_reach_the_right_player() {
         let mut session = LocalSession::default();
-        let mut game = GameState::default();
+        let mut game = fighting_state();
         session.add_local_input(0, LEFT);
         session.add_local_input(1, HEAVY);
         session.tick(&mut game);
@@ -43,7 +43,7 @@ mod tests {
     #[test]
     fn input_persists_until_replaced() {
         let mut session = LocalSession::default();
-        let mut game = GameState::default();
+        let mut game = fighting_state();
         session.add_local_input(0, LEFT);
         session.tick(&mut game);
         session.tick(&mut game);

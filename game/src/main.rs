@@ -20,6 +20,10 @@ fn window_conf() -> Conf {
     }
 }
 
+/// Local play has no server to hand out a seed, so any fixed value works.
+/// Online, the seed comes from the server's `MatchStart` message.
+const LOCAL_SEED: u64 = 1;
+
 /// Microseconds since the game started. macroquad gives seconds as f64; we
 /// convert once here so the clock works in whole numbers.
 fn now_micros() -> u64 {
@@ -30,7 +34,7 @@ fn now_micros() -> u64 {
 // window system (and the browser, in WASM) until the next frame is due.
 #[macroquad::main(window_conf)]
 async fn main() {
-    let mut game = GameState::default();
+    let mut game = GameState::new(LOCAL_SEED);
     let mut session = LocalSession::default();
     let mut clock = FixedClock::default();
     let mut last = now_micros();

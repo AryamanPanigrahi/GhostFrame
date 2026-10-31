@@ -1,9 +1,10 @@
 //! PLACEHOLDER debug view: grey boxes and text, just enough to see the
-//! movement, attacks and hits work. The real look comes from third-party art and
+//! movement, attacks, hits and rounds work. The real look comes from third-party art and
 //! replaces this. Floats are fine here; this code never feeds back into the sim.
 
-use crate::sim::fighter::{Fighter, FLOOR_Y, SUBPIXELS};
+use crate::sim::fighter::{Fighter, FLOOR_Y, MAX_HEALTH, SUBPIXELS};
 use crate::sim::rect::Rect;
+use crate::sim::round::{Phase, Round};
 use crate::sim::{is_held, GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 use macroquad::prelude::*;
 
@@ -87,11 +88,44 @@ pub fn draw(game: &GameState) {
 
     for (player, fighter) in game.fighters.iter().enumerate() {
         draw_fighter(&view, player, fighter);
+        draw_health_bar(&view, player, fighter.health, game.round.wins[player]);
         draw_held_buttons(&view, player, game.inputs[player]);
     }
+    draw_round_status(&view, &game.round);
 
-    let debug = format!("frame {}   render fps {}", game.frame, get_fps());
-    view.text(&debug, 500.0, 30.0, 24.0, WHITE);
+    // The checksum is shown so two runs (or, later, two laptops) can be
+    // compared by eye: same inputs must give the same number.
+    let debug = format!(
+        "frame {}   checksum {:016x}   render fps {}",
+        game.frame,
+        game.checksum(),
+        get_fps()
+    );
+    view.text(&debug, 20.0, 700.0, 22.0, WHITE);
+}
+
+/// Placeholder health bar along the top: an outline, filled in proportion
+/// to health, with the round wins underneath.
+fn draw_health_bar(view: &View, player: usize, health: i16, wins: u8) {
+    let (x, w, h) = (if player == 0 { 20.0 } else { 700.0 }, 560.0, 24.0);
+    let fill = w * health as f32 / MAX_HEALTH as f32;
+    view.rect(x, 20.0, w, h, GRAY);
+    view.rect(x, 20.0, fill, h, LIGHTGRAY);
+    let label = format!("P{}  {}hp  wins {}", player + 1, health, wins);
+    view.text(&label, x, 66.0, 22.0, WHITE);
+}
+
+/// Round number and what's happening, in the middle of the screen.
+fn draw_round_status(view: &View, round: &Round) {
+    view.text(&format!("Round {}", round.number), 600.0, 40.0, 24.0, WHITE);
+    let banner = match round.phase {
+        Phase::Ready => "READY".to_owned(),
+        Phase::Fight => return,
+        Phase::RoundOver { winner: Some(w) } => format!("K.O.  P{} wins the round", w + 1),
+        Phase::RoundOver { winner: None } => "DOUBLE K.O.  no score".to_owned(),
+        Phase::MatchOver { winner } => format!("P{} WINS THE MATCH", winner + 1),
+    };
+    view.text(&banner, 420.0, 300.0, 48.0, WHITE);
 }
 
 /// Sim units (integer subpixels) to logical pixels. This is the boundary
@@ -131,7 +165,7 @@ fn draw_held_buttons(view: &View, player: usize, input: Input) {
     for (i, (button, name)) in BUTTONS.iter().enumerate() {
         let x = x0 + i as f32 * 44.0;
         let color = if is_held(input, *button) { WHITE } else { GRAY };
-        view.rect(x, 50.0, 40.0, 40.0, color);
-        view.text(name, x + 6.0, 78.0, 22.0, BLACK);
+        view.rect(x, 80.0, 40.0, 40.0, color);
+        view.text(name, x + 6.0, 108.0, 22.0, BLACK);
     }
 }

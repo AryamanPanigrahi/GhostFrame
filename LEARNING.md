@@ -279,3 +279,61 @@ During hitstun the knockback speed shrinks by `KNOCKBACK_FRICTION` each tick, so
 **Why:** Frame advantage decides who has the initiative after every exchange, which is the core of fighting-game strategy. It falls out of the frame data, which is why the numbers in `attack.rs` matter more than they look.
 
 **Where:** the frame data in `game/src/sim/attack.rs`. Test: `frame_advantage_on_hit` in `game/src/sim/mod.rs` checks both numbers.
+
+---
+
+## Round flow (a second state machine)
+
+**What:** On top of each fighter's `Action`, the game has a `Phase`:
+- **Ready** (1 s): fighters placed, input ignored.
+- **Fight.**
+- **RoundOver** (2 s) after a KO.
+- **MatchOver** (4 s) once someone has 2 round wins. Then a fresh match starts.
+
+Each pause has a `timer` that counts down once per tick; at 0, `tick_round` moves to the next phase.
+
+**Why:** Fighting games need clean breaks: nobody should be able to attack during the countdown or hit a KO'd opponent. Gating input on the phase (`Round::accepts_input`) does that in one place instead of sprinkling checks around. Physics still runs during pauses, so a fighter KO'd mid-air still falls and lands.
+
+**Where:** `game/src/sim/round.rs` (`Phase`, `Round`, the tick constants). `game/src/sim/mod.rs`: `GameState::advance` (input gating), `check_ko`, `tick_round`, `start_round`, `end_match`. Tests: `match_starts_in_ready_and_ignores_input`, `ko_ends_the_round_and_scores`, `next_round_resets_fighters_but_keeps_score`, `second_win_takes_the_match_then_a_new_match_starts`.
+
+---
+
+## KO, knockdown and the double KO
+
+**What:** When health hits 0, the fighter goes into `Knockdown` (no input, no turning, slides to a stop) and the other player scores a round win. Hits are only checked during `Fight`, so a swing that's still active after the KO can't knock the fighter out of Knockdown. If a trade takes *both* fighters to 0 on the same tick, it's a draw: nobody scores and the round is replayed.
+
+**Why:** The double KO falls straight out of G3's "check both hits, then apply both" rule; we just had to decide what it means. A draw avoids the strange case of both players reaching 2 wins at once.
+
+**Where:** `GameState::check_ko` (`game/src/sim/mod.rs`), `Fighter::knock_down` (`game/src/sim/fighter.rs`). Tests: `input_is_ignored_after_ko`, `double_ko_is_a_draw_and_replays_the_round`, `knocked_down_fighter_cannot_act_or_turn`.
+
+---
+
+## Seeded PRNG (xorshift64)
+
+**What:** A pseudo-random number generator is a function that turns one number (the *state*) into the next, in a sequence that *looks* random. xorshift64 does it with three steps: `x ^= x << 13; x ^= x >> 7; x ^= x << 17`. The starting state is the *seed*. Zero is the one seed that never changes (0 shifted and xored is still 0), so it's replaced with a fixed non-zero constant.
+
+**Why:** OS randomness (`thread_rng`) differs per machine, which would desync online play instantly. A generator whose state lives in `GameState` gives the same numbers on both machines (same seed from the server's `MatchStart`). It's also saved and restored with everything else, so rollback replays the same "random" numbers. Nothing in the sim *uses* randomness yet; it's in the state now so the checksum and rollback already cover it.
+
+**Where:** `game/src/sim/rng.rs` (`Rng::new`, `Rng::next_u64`). `GameState.rng`, seeded by `GameState::new(seed)`; locally `LOCAL_SEED` in `game/src/main.rs`. Tests: same seed same sequence, zero seed not stuck, a known first value.
+
+---
+
+## FNV-1a checksum
+
+**What:** A hash function turns any amount of data into a fixed-size number (here 64 bits) that changes if any input bit changes. FNV-1a starts at a fixed "offset basis" and, for each byte, XORs the byte in and multiplies by a fixed prime. The multiply smears each byte's effect across all 64 bits.
+
+**Why:** Online, the two machines can't compare whole game states every few frames (too big), but they can compare one `u64`. If the checksums for the same frame differ, the games have desynced (DESIGN.md section 5, step 7). We write FNV-1a ourselves because Rust's built-in hasher is allowed to change between versions and platforms, and ours must be identical on native and WASM. Tests check it against the official FNV test vectors.
+
+**Where:** `game/src/sim/checksum.rs` (`Fnv1a`). `GameState::checksum` (`game/src/sim/mod.rs`). Shown on screen in the placeholder debug line.
+
+---
+
+## Making the checksum complete and stable
+
+**Every field:** `GameState::checksum` and `Fighter::hash_into` start with a destructuring `let` that names every field (`let Fighter { x, y, ... } = *self;`). If someone adds a field and forgets to hash it, Rust refuses to compile, because the pattern no longer lists every field. A missing field would otherwise be a silent hole: two machines could disagree on it and the checksum would never notice.
+
+**Same bytes everywhere:** numbers are fed in little-endian order (`to_le_bytes`), so the bytes are identical on every CPU. Enums are hashed through explicit tags (`Action::tag`, the `match` in `hash_round`) rather than `as u8`, so reordering variants in the source can't quietly change every hash.
+
+**Order matters:** players are hashed P1 then P2, so swapping them gives a different checksum.
+
+**Where:** `game/src/sim/mod.rs` (`checksum`, `hash_round`), `game/src/sim/fighter.rs` (`hash_into`, `Action::tag`). Tests: `changing_any_part_of_the_state_changes_the_checksum`, `swapping_the_players_changes_the_checksum`, `numbers_are_little_endian`.
