@@ -42,7 +42,7 @@ riposte/
 │   │   │   ├── synctest.rs
 │   │   │   └── p2p.rs
 │   │   ├── protocol.rs   # messages between peers
-│   │   └── transport/    # in-memory, fake-latency, websocket
+│   │   └── transport/    # memory.rs (R3, tests), fake-latency (R4), websocket (R6)
 │   └── examples/boxes.rs # toy game used to test rewind without Riposte
 ├── game/                 # the fighting game (crate: riposte-game)
 │   └── src/
@@ -196,6 +196,8 @@ enum ServerMsg { RoomCreated { code: String },
 
 The seed in `MatchStart` initializes the game's PRNG so both clients start identically.
 
+As built in R3 (`rewind/src/protocol.rs`), `ack_frame` means "the first of your frames I don't have yet", so 0 means nothing received. Every message resends all inputs from the peer's last `ack_frame` onward.
+
 ---
 
 ## 7. Game simulation (riposte-game)
@@ -321,7 +323,7 @@ Ownership is by milestone and file, not by crate.
 ✅ = done, ◐ = partly done. Current status, test count and open questions are in PROGRESS.md.
 
 **Aryaman**
-- **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
+- ✅ **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
 - **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
 - ✅ **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
 - ✅ **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.

@@ -10,8 +10,14 @@
 
 pub mod api;
 pub mod input_queue;
+pub mod protocol;
 pub mod session;
+pub mod snapshot;
+pub mod transport;
 
 pub use api::{Event, Frame, RollbackGame, Transport};
 pub use input_queue::{AddOutcome, InputQueue, InputStatus};
+pub use protocol::PeerMsg;
+pub use session::p2p::{Config, P2PSession};
 pub use session::synctest::{SyncTestError, SyncTestSession};
+pub use transport::memory::{memory_pair, MemoryTransport};

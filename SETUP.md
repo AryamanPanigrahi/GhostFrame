@@ -76,6 +76,17 @@ serde = "1"
 
 Nothing to run: Cargo downloads it on the next build and records the exact version in `Cargo.lock`.
 
+**R3 adds two things to `rewind/Cargo.toml`:**
+- serde's `derive` feature, which generates the serialization code for the `PeerMsg` enum.
+- `bincode` (version 1, the same as the relay server), which turns a `PeerMsg` into compact bytes and back.
+
+Both are listed for rewind in DESIGN.md section 9. `bincode` was already in `Cargo.lock` through the server, so nothing new is downloaded:
+
+```toml
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+```
+
 ## 5. Build, test, run
 
 ```bash

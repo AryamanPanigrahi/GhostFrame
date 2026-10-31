@@ -5,5 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Inputs are sent over the network, so `RollbackGame::Input` must be
-# serializable. Only the traits are needed here, not the derive macros.
-serde = "1"
+# serializable. `derive` generates the code for `PeerMsg` (R3).
+serde = { version = "1", features = ["derive"] }
+# PeerMsg travels as bincode bytes, the same format as the relay's messages.
+bincode = "1"

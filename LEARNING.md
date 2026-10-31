@@ -513,3 +513,69 @@ It's why DESIGN.md says the game must pass it before any online work is merged (
 **Why:** The sim must stay deterministic and identical on both peers, and rollback re-runs it. If effects were in the sim they would be part of the checksum and could desync. Reading the state and never writing to it keeps feel and fairness separate. A frame counter going backwards (restart) or health going up is treated as a new baseline, never as damage.
 
 **Where:** `game/src/render/effects.rs` (`Effects::observe`, `flash`, `shake_offset`), called from `draw` in `game/src/render/mod.rs`. Tests: the `tests` module in `effects.rs`.
+
+---
+
+## Snapshot ring buffer
+
+**What:** A fixed number of slots (`max_prediction + 2`, so 10). The state saved just before frame `f` goes in slot `f % 10`, tagged with `f`. Saving frame 10 overwrites frame 0's slot. Asking for a frame whose slot now holds a different frame returns `None`.
+
+**Why:** A rollback goes back at most `max_prediction` frames, so older states are never needed. A ring that overwrites the oldest slot keeps memory constant however long the match runs, with no allocation per frame. The frame tag stops a stale state from ever being loaded by mistake.
+
+**Where:** `rewind/src/snapshot.rs` (`SnapshotBuffer::save`, `get`), used by `P2PSession::advance_frame` and `rollback_to`.
+
+---
+
+## The P2P session tick (prediction, rollback, resimulation)
+
+**What:** Each `P2PSession::tick` does six steps:
+1. Put the local input on frame `current + input_delay`.
+2. Read the peer's messages. Their inputs go into the remote `InputQueue`, which notices if any of them differ from what we guessed.
+3. If a guess was wrong, **roll back**: load the snapshot from the first wrong frame, then **resimulate** every frame from there to now with the corrected inputs. Each resimulated frame saves a fresh snapshot.
+4. Send our unacknowledged inputs.
+5. Snapshot, then advance the current frame, guessing the peer's input as "same as their last one" if it hasn't arrived.
+6. Forget inputs no future rollback or resend can need.
+
+**Why:** The local player's button presses take effect immediately (after the small input delay) instead of waiting a full network round trip. Most guesses are right, because players hold buttons for many frames, so rollbacks are rare and short. When one happens, it's invisible: the corrected frames are re-run within the same tick, before anything is drawn.
+
+**Where:** `rewind/src/session/p2p.rs`: `tick`, `receive`, `rollback_to`, `send`, `advance_frame`, `forget_old_inputs`. Tests: `late_inputs_roll_back_and_converge`, `no_input_delay_rolls_back_and_still_matches`.
+
+---
+
+## Input delay
+
+**What:** With `input_delay = 2`, a button pressed on tick `t` applies to frame `t + 2`. The first 2 frames get "nothing pressed" on both machines.
+
+**Why:** The input is sent immediately but used 2 frames later, so it has about 33 ms to reach the peer before they need it. If it arrives in time, the peer never has to guess. The test `input_delay_hides_one_tick_of_lag` shows zero rollbacks when messages arrive one tick late. Too much delay makes the game feel sluggish, so 2 frames is a common compromise.
+
+**Where:** `P2PSession::new` (filling frames `0..input_delay`) and step 1 of `tick`. `Config::input_delay`.
+
+---
+
+## Redundant sends and acknowledgements
+
+**What:** Every message carries *all* local inputs the peer hasn't acknowledged yet (`start_frame` plus a list), and our acknowledgement of theirs (`ack_frame` = "I have all your inputs before this frame"). When their acknowledgement arrives, we stop resending those frames.
+
+**Why:** Over a real network messages get lost. Instead of detecting loss and asking for a resend (an extra round trip), the next message simply repeats everything that might be missing. Inputs are tiny (2 bytes each), so this is cheap. Duplicates are harmless because the queue ignores frames it already has, and the acknowledgement only ever moves forward, so out-of-order messages can't move it back.
+
+**Where:** `P2PSession::send` and `receive`; `PeerMsg::Inputs` in `rewind/src/protocol.rs`. Tests: `unacknowledged_inputs_are_resent_until_acked`, `lost_messages_are_covered_by_resending`, `duplicate_messages_are_harmless`.
+
+---
+
+## Testing that tests can fail (mutation check)
+
+**What:** After writing the session tests, the rollback call was temporarily removed. 5 of the 10 tests failed, which proves those tests really depend on rollback working. The other 5 pass on purpose: lockstep with input delay never needs to guess, and the rest test messaging. The code was then restored.
+
+**Why:** A test that passes whether or not the feature works proves nothing. Breaking the feature on purpose ("mutation testing", done here by hand) is the quickest way to know the tests are meaningful.
+
+**Where:** the tests module of `rewind/src/session/p2p.rs`.
+
+---
+
+## Sharing in one thread: `Rc<RefCell<..>>`
+
+**What:** The in-memory transport pair needs two objects to write into and read from the same queue. `Rc` (reference counted) lets several owners share one value; it's freed when the last owner goes away. `RefCell` allows changing that shared value: Rust checks the borrow rules at run time instead of compile time.
+
+**Why:** Normal Rust ownership allows either one owner or shared read-only access. A mailbox both ends write to needs shared *and* mutable access. In a single thread, `Rc<RefCell<..>>` is the standard tool. Across threads it would be `Arc<Mutex<..>>`.
+
+**Where:** `rewind/src/transport/memory.rs` (`Mailbox`, `memory_pair`).

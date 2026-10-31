@@ -18,14 +18,14 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
 | R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
-| R3: `P2PSession` | Aryaman | Not started (unblocked: R1 is on `main`) |
+| R3: `P2PSession` | Aryaman | ✅ Done |
 | R4: fake-network transport + convergence tests | Aryaman | Not started |
-| R5: checksums, desync, stall | Ram | Not started (needs R3) |
+| R5: checksums, desync, stall | Ram | Not started (unblocked: R3 is done) |
 | R6: WebSocket transport | Ram | Not started |
 | S1, S2: relay server | Ram | ✅ Done |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 118 tests, all passing (`cargo test --workspace`): 22 in `rewind`, 79 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 135 tests, all passing (`cargo test --workspace`): 39 in `rewind`, 79 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -260,6 +260,38 @@ cargo run -p riposte-server
 
 ---
 
+## R3: `P2PSession` (Aryaman)
+
+**Gist:**
+- The online session. Local inputs apply `input_delay` frames late, and the first `input_delay` frames are "nothing pressed".
+- Every tick it receives the peer's inputs. If a guess about them was wrong, it loads the snapshot from the first wrong frame and re-runs every frame since with the real inputs.
+- It then sends every local input the peer hasn't acknowledged, snapshots, and advances.
+- Old inputs are forgotten once no rollback or resend can need them.
+
+**Files:**
+- `rewind/src/session/p2p.rs` (`P2PSession`, `Config`).
+- `rewind/src/snapshot.rs` (`SnapshotBuffer`).
+- `rewind/src/protocol.rs` (`PeerMsg`, exactly as DESIGN.md section 6).
+- `rewind/src/transport/memory.rs` (`memory_pair`, for tests).
+- Wiring lines in Ram's `rewind/src/lib.rs` and `rewind/src/session/mod.rs`.
+- `serde` derive + `bincode` in `rewind/Cargo.toml`.
+
+**Numbers:** `input_delay` 2, `max_prediction` 8, snapshot ring of 10.
+
+**Decisions:**
+- `ack_frame` means "the first of your frames I don't have yet", so 0 means nothing received.
+- Receive happens before send, so the acknowledgement we send is as fresh as possible.
+- Undecodable messages are ignored, because the peer resends everything unacknowledged anyway.
+- A gap in a message's frames stops reading that message.
+- Rolling back further than the snapshot ring panics with a clear message. R5's stall is what keeps the session within `max_prediction`, so **R5 is needed before playing over a real network**.
+
+**Tests:** 17 new.
+- `SnapshotBuffer` (4) and the memory transport (3).
+- The session (10): both peers match a reference run (lockstep, no input delay, bursts of late inputs, lost messages, duplicated messages), input delay hiding one tick of lag with zero rollbacks, constant input never mispredicted, exact resend/ack contents, garbage bytes ignored, and rolling back past the snapshots caught.
+- Removing the rollback call makes 5 of the 10 session tests fail, so they really test it.
+
+---
+
 ## G6: game feel (render-only)
 
 **Gist:** A hit now flashes the defender red and shakes the view, harder and longer for bigger hits (light: 5 px for 3 ticks; heavy: 12 px for 8 ticks). `Effects` only reads `GameState`; it never writes to it.
@@ -289,5 +321,6 @@ cargo run -p riposte-server
 - **Tuning:** all movement and frame-data numbers are first guesses. Ram's G6 includes frame-data tuning.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.
 - **Main loop floats:** `main.rs` converts macroquad's `f64` time to integers once. The "floats only in `render/`" rule is read as applying to the sim; say if it should be stricter.
-- **R3:** unblocked now that R1 is on `main`. Ram's note: `InputQueue` doesn't handle `input_delay`, so `P2PSession` should fill the first `input_delay` local frames with default inputs.
+- **R5 (Ram) builds on R3:** `P2PSession::tick` returns an empty `Vec<Event>` for R5 to fill. `PeerMsg::Checksum` is defined but ignored on receipt, and there's no stall yet. A good place for the stall check is the start of `tick`, comparing `current_frame` with the remote queue's next frame against `Config::max_prediction`. R5 will probably also add `checksum_interval` to `Config`.
+- **`protocol.rs` ownership:** it isn't listed for either of us in CLAUDE.md. R3 created it exactly as DESIGN.md section 6 freezes it; R5 uses its `Checksum` variant.
 - **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.
