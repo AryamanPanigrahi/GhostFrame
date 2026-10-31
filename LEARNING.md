@@ -314,3 +314,39 @@ During hitstun the knockback speed shrinks by `KNOCKBACK_FRICTION` each tick, so
 - *`discard_before`* drops inputs no rollback can reach any more (older than `max_prediction` frames), so memory doesn't grow for the whole match. A `VecDeque` (a double-ended queue) makes dropping from the front cheap.
 
 **Where:** `rewind/src/input_queue.rs` (`InputQueue::add_input`, `input`, `first_incorrect_frame`, `reset_prediction`, `discard_before`). Tests in the same file: `predicts_last_confirmed_input`, `wrong_prediction_is_flagged`, `earliest_wrong_frame_is_kept`, `reset_clears_predictions_and_the_flag`.
+
+---
+
+## Sync test (proving determinism offline)
+
+**What:** `SyncTestSession` runs a game on one machine with no network. Every tick it advances one frame normally and records the checksum. Then it loads the state from `check_distance` frames ago (8, the furthest a real rollback goes), replays those frames with the same inputs, and checks every checksum matches the first run. Any difference is returned as a `SyncTestError` naming the frame.
+
+**Why:** Online, a determinism bug shows up as a desync minutes into a match, on two machines, with no clue where it started. The sync test makes every single tick a rollback, so the same bug appears within a few frames, locally, with the exact frame. The usual culprits it catches:
+- state that `save`/`load` forget (a counter or timer kept outside `State`),
+- reading the clock, the window or a random generator that isn't part of the state,
+- iteration order that isn't fixed (`HashMap`),
+- floats that round differently.
+
+It's why DESIGN.md says the game must pass it before any online work is merged (G5).
+
+**Where:** `rewind/src/session/synctest.rs` (`SyncTestSession::tick`). Tests: `deterministic_game_passes`, `state_missing_from_save_is_caught`, `rollbacks_leave_the_same_state_as_a_plain_run`. Demo: `cargo run -p rewind --example boxes` passes, and `-- --broken` (a tick counter left out of `save`) fails at frame 7.
+
+---
+
+## Checksums with FNV-1a
+
+**What:** A checksum squeezes a whole game state into one `u64`. FNV-1a starts from a fixed number and, for each byte of the state, XORs the byte in and then multiplies by a fixed prime. Two identical states always give the same number, and different ones almost always give different numbers.
+
+**Why:** Comparing whole states every frame (or sending them over the network) would be slow and large. Comparing one `u64` is instant and 8 bytes to send. We write our own instead of using Rust's `DefaultHasher` because that one is allowed to change between Rust versions and is randomly seeded in `HashMap`. Our checksum has to be identical on every machine, native or WASM, forever.
+
+**Where:** `Fnv1a` in `rewind/examples/boxes.rs` (the toy game's `checksum`). Riposte gets its own copy in G4.
+
+---
+
+## Toy game for testing a library (`examples/boxes.rs`)
+
+**What:** Two boxes moving around a walled arena, with integer positions, implemented as a `RollbackGame`. Cargo builds files in `examples/` against the library as if they were an outside user, and runs one with `cargo run -p rewind --example boxes`.
+
+**Why:** It proves rewind really is game-agnostic: it works with a game that isn't Riposte. It's also small enough to debug rewind itself without the fighting game in the way, and `cargo test` builds it, so an API change that breaks it is caught.
+
+**Where:** `rewind/examples/boxes.rs`.
