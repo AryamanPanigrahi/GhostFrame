@@ -274,8 +274,8 @@ During hitstun the knockback speed shrinks by `KNOCKBACK_FRICTION` each tick, so
 
 ## Frame advantage
 
-**What:** After an attack connects, who gets to act first? Compare the defender's hitstun with how long the attacker still has to wait (rest of active + recovery). If the attacker recovers first, the attack is *plus on hit*. The light here hits on frame 4 (tick T). The attacker finishes frames 5–14 and is free on tick T+11. The defender's 15 ticks of hitstun run out on tick T+15. So the attacker acts 4 ticks first: the light is **+4 on hit**. The heavy, by the same sums, is −3 on hit (free on T+24 vs T+21), so even landing it hands the opponent the initiative.
+**What:** After an attack connects, who gets to act first? Compare the defender's hitstun with how long the attacker still has to wait (rest of active + recovery). If the attacker recovers first, the attack is *plus on hit*. The light here hits on frame 4 (tick T). The attacker finishes frames 5–14 and is free on tick T+11. The defender's 15 ticks of hitstun run out on tick T+15. So the attacker acts 4 ticks first: the light is **+4 on hit**. The heavy, by the same sums, is −4 on hit (attacker free on T+24, defender on T+20), so even landing it hands the opponent the initiative.
 
 **Why:** Frame advantage decides who has the initiative after every exchange, which is the core of fighting-game strategy. It falls out of the frame data, which is why the numbers in `attack.rs` matter more than they look.
 
-**Where:** the frame data in `game/src/sim/attack.rs`. Test: `light_on_hit_leaves_attacker_free_first` in `game/src/sim/mod.rs`.
+**Where:** the frame data in `game/src/sim/attack.rs`. Test: `frame_advantage_on_hit` in `game/src/sim/mod.rs` checks both numbers.

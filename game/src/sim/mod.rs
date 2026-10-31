@@ -258,26 +258,31 @@ mod tests {
         assert_eq!(state.fighters[0].health, MAX_HEALTH);
     }
 
-    #[test]
-    fn light_on_hit_leaves_attacker_free_first() {
-        // Frame advantage: after a light hit the attacker recovers before the
-        // defender leaves hitstun, so the attacker gets to act first.
+    /// Ticks between the defender and the attacker becoming actionable
+    /// after `button`'s attack hits. Positive means the attacker acts first.
+    fn advantage_on_hit(button: Input) -> i32 {
         let mut state = fighters_apart(100);
-        state.advance([LIGHT, 0]);
+        state.advance([button, 0]);
         let mut p1_free_at = None;
         let mut p2_free_at = None;
-        for tick in 1..60 {
+        for tick in 1..100 {
             state.advance([0, 0]);
-            if p1_free_at.is_none() && state.fighters[0].is_actionable() {
+            let p1 = &state.fighters[0];
+            let p2 = &state.fighters[1];
+            if p1_free_at.is_none() && p1.is_actionable() {
                 p1_free_at = Some(tick);
             }
-            if state.fighters[1].health < MAX_HEALTH
-                && p2_free_at.is_none()
-                && state.fighters[1].is_actionable()
-            {
+            if p2_free_at.is_none() && p2.health < MAX_HEALTH && p2.is_actionable() {
                 p2_free_at = Some(tick);
             }
         }
-        assert!(p1_free_at.unwrap() < p2_free_at.unwrap());
+        p2_free_at.unwrap() - p1_free_at.unwrap()
+    }
+
+    #[test]
+    fn frame_advantage_on_hit() {
+        // Light: the attacker acts first. Heavy: the defender does.
+        assert_eq!(advantage_on_hit(LIGHT), 4);
+        assert_eq!(advantage_on_hit(HEAVY), -4);
     }
 }
