@@ -86,7 +86,7 @@ Every concept in Riposte, explained from first principles, with where it lives i
 
 **Why:** An attack should start when the button is *pressed*, not repeat every tick it's held. "Pressed" means "held now, not held last tick", which needs last tick's input. It lives *in the game state* (not in the input layer) so that saving and loading the state for rollback also restores it; otherwise a replayed tick could see the wrong "last input".
 
-**Where:** `game/src/sim/mod.rs`, `GameState.inputs`. Used for real in G3.
+**Where:** `game/src/sim/mod.rs`, `GameState.inputs` and the `pressed0`/`pressed1` lines in `GameState::advance`: `pressed = held_now & !held_last_tick`. `Fighter::ground_control` starts attacks only on `pressed`. Test: `holding_the_button_does_not_start_an_attack`.
 
 ---
 
@@ -187,3 +187,95 @@ Every concept in Riposte, explained from first principles, with where it lives i
 **Order independence:** `GameState::advance` reads *both* positions first, turns both fighters, and only then moves them. If P1 moved first and P2 then turned based on P1's new position, P1 would always see slightly older information than P2. Reading everything at the start of the tick makes the result the same whichever player is updated first.
 
 **Where:** `game/src/sim/fighter.rs`, `Fighter::face`. `game/src/sim/mod.rs`, `GameState::advance`. Tests: `faces_opponent_on_ground_only`, `fighters_turn_around_after_crossing`.
+
+---
+
+## Action state machine
+
+**What:** A fighter is always in exactly one `Action`: Idle, Walk, Crouch, Jump, Light, Heavy or Hitstun. Each tick, `Fighter::step` first advances the current action's timer (an attack's `action_frame` counts up, `hitstun` counts down). If that timer has run out the fighter goes back to Idle, and only an *actionable* fighter (Idle/Walk/Crouch, on the floor) reads input.
+
+**Why:** It makes "what can this fighter do right now?" a single question with one answer. Mid-attack you can't walk, jump or start another attack, so committing to a move has a cost. A hit replaces whatever action was running with Hitstun, which is how a faster attack interrupts a slower one. Without one explicit state, these rules turn into a tangle of booleans that disagree with each other.
+
+**Where:** `game/src/sim/fighter.rs`: `Action`, `Fighter::step`, `tick_action`, `is_actionable`, `ground_control`, `start_attack`.
+
+---
+
+## Frame data (startup, active, recovery)
+
+**What:** Each attack is described by numbers of ticks ("frames"):
+- **startup:** before the hitbox appears (you're committed but harmless),
+- **active:** the hitbox exists and can hit,
+- **recovery:** the hitbox is gone but you can't act yet.
+
+The light attack is 4 / 3 / 8 (15 total); the heavy is 10 / 4 / 20 (34 total). `action_frame` is 0 on the tick the attack starts, so the light's hitbox exists on frames 4, 5 and 6.
+
+**Why:** These numbers *are* the game design. Short startup means the attack beats slower ones. Long recovery means a miss can be punished. Because the sim runs at a fixed 60 ticks/s, a frame count is an exact duration on every machine.
+
+**Where:** `game/src/sim/attack.rs`: `Attack`, `LIGHT_ATTACK`, `HEAVY_ATTACK`, `Attack::is_active`, `Attack::total`. Tests: `active_only_between_startup_and_recovery`, `attack_lasts_exactly_its_total_frames`.
+
+---
+
+## AABB overlap (axis-aligned bounding boxes)
+
+**What:** A rectangle that never rotates, stored as its four edges. Two such boxes overlap exactly when they overlap on x *and* on y:
+`a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom`.
+We use strict `<`, so boxes that only touch along an edge don't count.
+
+**Why:** It's four integer comparisons, with no square roots or angles, and it's exact and deterministic. Fighting games have used rectangles for hit detection since the arcade era for exactly this reason.
+
+**Where:** `game/src/sim/rect.rs`, `Rect::overlaps`, with tests for overlap, separation on each axis and touching edges.
+
+---
+
+## Hitbox vs hurtbox
+
+**What:** A **hurtbox** is where a fighter *can be hit* (here, their whole body; shorter when crouching). A **hitbox** is where an attack *hits*, and it exists only during the attack's active frames. A hit happens when the attacker's hitbox overlaps the defender's hurtbox. The hitbox is stored relative to the attacker's feet as "forward" reach and "upward" height, and mirrored when the attacker faces left.
+
+**Why:** Keeping the two separate lets attacks have their own shape and timing. The light attack hits high (130–160 px up), so it passes over a crouching opponent (120 px tall); the heavy hits mid (60–110 px), so it reaches crouchers but is slow. That gives crouching a purpose without any extra code.
+
+**Where:** `Fighter::hurtbox`, `Fighter::active_hitbox` (`game/src/sim/fighter.rs`); `Attack::hitbox` (`game/src/sim/attack.rs`). The placeholder view draws the sim's own boxes (hitbox outlined in red), so what you see is what the code checks. Tests: `hitbox_mirrors_with_facing`, `light_whiffs_over_crouch_but_heavy_hits_it`.
+
+---
+
+## One hit per swing
+
+**What:** `Fighter.attack_connected` is set when an attack lands and reset when a new attack starts. While it's set, the remaining active frames can't hit again.
+
+**Why:** The light attack is active for 3 ticks. Without this flag, a hitbox overlapping the opponent for all 3 would deal damage 3 times.
+
+**Where:** `game/src/sim/mod.rs`, `check_hit` and the hit-applying lines in `GameState::advance`. Test: `one_swing_hits_only_once`.
+
+---
+
+## Resolving hits without favouring player 1 (trades)
+
+**What:** After both fighters move, `advance` checks P1-hits-P2 *and* P2-hits-P1 using the same snapshot of both fighters, and only then applies the results. If both hit on the same tick, both take damage (a *trade*).
+
+**Why:** If we checked and applied P1's hit first, P2 would already be in hitstun with no hitbox, and their hit would vanish, so P1 would win every tie. It's the same principle as facing in G2: read everything first, then write.
+
+**Where:** `game/src/sim/mod.rs`, `GameState::advance`. Tests: `simultaneous_hits_trade`, `faster_attack_interrupts_slower_one`.
+
+---
+
+## Damage, hitstun and knockback
+
+**What:** On a hit the defender:
+- loses `damage` health, never below 0,
+- enters `Hitstun` for `hitstun` ticks and can't act,
+- gets pushed away from the attacker at `knockback` subpixels/tick.
+
+During hitstun the knockback speed shrinks by `KNOCKBACK_FRICTION` each tick, so the push slows to a stop. A fighter hit in the air stays in Hitstun but keeps falling, because "airborne" is now decided by position (`y < FLOOR_Y`), not by action.
+
+**Why:** Hitstun is what makes a hit matter beyond the damage: it's time the opponent can't use. Knockback creates space so attacks don't stack forever, and walls stop it, which makes the corner dangerous.
+
+**Where:** `Fighter::take_hit`, `tick_action`, `toward_zero` (`game/src/sim/fighter.rs`). Tests: `hitstun_blocks_input_then_ends`, `knockback_slows_down_during_hitstun`, `knockback_pushes_the_defender_away`, `hit_in_the_air_still_falls`.
+
+---
+
+## Frame advantage
+
+**What:** After an attack connects, who gets to act first? Compare the defender's hitstun with how long the attacker still has to wait (rest of active + recovery). If the attacker recovers first, the attack is *plus on hit*. The light here hits on frame 4 (tick T). The attacker finishes frames 5–14 and is free on tick T+11. The defender's 15 ticks of hitstun run out on tick T+15. So the attacker acts 4 ticks first: the light is **+4 on hit**. The heavy, by the same sums, is −3 on hit (free on T+24 vs T+21), so even landing it hands the opponent the initiative.
+
+**Why:** Frame advantage decides who has the initiative after every exchange, which is the core of fighting-game strategy. It falls out of the frame data, which is why the numbers in `attack.rs` matter more than they look.
+
+**Where:** the frame data in `game/src/sim/attack.rs`. Test: `light_on_hit_leaves_attacker_free_first` in `game/src/sim/mod.rs`.

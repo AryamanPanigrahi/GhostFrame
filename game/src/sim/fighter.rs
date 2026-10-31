@@ -1,7 +1,10 @@
-//! One fighter's movement: walking, crouching, jumping, gravity, floor, walls
-//! and facing. All positions and speeds are integer subpixels.
+//! One fighter: movement (walk, crouch, jump, gravity, floor, walls, facing)
+//! and the action state machine (attacks, hitstun). All positions and speeds
+//! are integer subpixels.
 
-use super::{is_held, Input, DOWN, LEFT, RIGHT, UP};
+use super::attack::{Attack, HEAVY_ATTACK, LIGHT_ATTACK};
+use super::rect::Rect;
+use super::{is_held, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 
 /// 1 pixel = 256 subpixels. Speeds like 3.5 px/tick become whole numbers
 /// (896) without floats.
@@ -29,12 +32,22 @@ pub const JUMP_X_SPEED: i32 = 4 * SUBPIXELS;
 pub const JUMP_VELOCITY: i32 = -15 * SUBPIXELS;
 pub const GRAVITY: i32 = 192;
 
+pub const MAX_HEALTH: i16 = 1000;
+
+/// How much knockback speed is lost per tick of hitstun (subpixels/tick).
+pub const KNOCKBACK_FRICTION: i32 = 64;
+
+/// What the fighter is doing. Only Idle, Walk and Crouch accept new input;
+/// every other action has to finish (or be interrupted by a hit) first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Idle,
     Walk,
     Crouch,
     Jump,
+    Light,
+    Heavy,
+    Hitstun,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -48,6 +61,14 @@ pub struct Fighter {
     /// +1 facing right, -1 facing left.
     pub facing: i8,
     pub action: Action,
+    /// Ticks since the current attack started (0 on its first tick).
+    pub action_frame: u16,
+    /// Ticks of hitstun left.
+    pub hitstun: u16,
+    pub health: i16,
+    /// The current attack already hit, so its remaining active frames
+    /// mustn't hit again: one swing, one hit.
+    pub attack_connected: bool,
 }
 
 impl Fighter {
@@ -59,11 +80,53 @@ impl Fighter {
             vy: 0,
             facing,
             action: Action::Idle,
+            action_frame: 0,
+            hitstun: 0,
+            health: MAX_HEALTH,
+            attack_connected: false,
         }
     }
 
+    /// Based on position, not action: a fighter hit out of a jump is in
+    /// Hitstun but still has to fall.
     pub fn is_airborne(&self) -> bool {
-        self.action == Action::Jump
+        self.y < FLOOR_Y
+    }
+
+    /// Free to walk, crouch, jump or start an attack this tick.
+    pub fn is_actionable(&self) -> bool {
+        let free = matches!(self.action, Action::Idle | Action::Walk | Action::Crouch);
+        free && !self.is_airborne()
+    }
+
+    /// Frame data of the attack in progress, if any.
+    pub fn current_attack(&self) -> Option<Attack> {
+        match self.action {
+            Action::Light => Some(LIGHT_ATTACK),
+            Action::Heavy => Some(HEAVY_ATTACK),
+            _ => None,
+        }
+    }
+
+    /// The area where this fighter can be hit: their whole body.
+    pub fn hurtbox(&self) -> Rect {
+        let half = FIGHTER_WIDTH / 2;
+        Rect {
+            left: self.x - half,
+            top: self.y - self.height(),
+            right: self.x + half,
+            bottom: self.y,
+        }
+    }
+
+    /// The hitbox of the current attack, only during its active frames.
+    pub fn active_hitbox(&self) -> Option<Rect> {
+        let attack = self.current_attack()?;
+        if attack.is_active(self.action_frame) {
+            Some(attack.hitbox(self.x, self.y, self.facing))
+        } else {
+            None
+        }
     }
 
     pub fn height(&self) -> i32 {
@@ -74,10 +137,11 @@ impl Fighter {
         }
     }
 
-    /// Turn to face the opponent. Only on the ground: fighters keep their
-    /// facing through a jump, so jumping over someone doesn't flip you mid-air.
+    /// Turn to face the opponent, but only when actionable: fighters keep
+    /// their facing through a jump (no flipping mid-air), an attack (the
+    /// hitbox can't swap sides mid-swing) and hitstun.
     pub fn face(&mut self, opponent_x: i32) {
-        if self.is_airborne() {
+        if !self.is_actionable() {
             return;
         }
         if opponent_x > self.x {
@@ -88,11 +152,16 @@ impl Fighter {
         // Exactly equal x: keep the old facing rather than pick a side.
     }
 
-    /// One tick of movement: read input (on the ground only), then move,
-    /// then apply gravity, the floor and the walls.
-    pub fn step(&mut self, input: Input) {
-        if !self.is_airborne() {
-            self.ground_control(input);
+    /// One tick: count down the current action, read input if actionable,
+    /// then move and apply gravity, the floor and the walls.
+    ///
+    /// `held` is every button down this tick; `pressed` is only the ones that
+    /// weren't down last tick. Attacks start on a press, so holding a button
+    /// doesn't repeat the attack.
+    pub fn step(&mut self, held: Input, pressed: Input) {
+        self.tick_action();
+        if self.is_actionable() {
+            self.ground_control(held, pressed);
         }
 
         self.x += self.vx;
@@ -103,7 +172,8 @@ impl Fighter {
 
         if self.y >= FLOOR_Y {
             self.y = FLOOR_Y;
-            if self.is_airborne() {
+            self.vy = 0;
+            if self.action == Action::Jump {
                 self.land();
             }
         }
@@ -112,14 +182,42 @@ impl Fighter {
         self.x = self.x.clamp(half, STAGE_WIDTH - half);
     }
 
-    fn ground_control(&mut self, input: Input) {
-        let dir = horizontal(input);
-        if vertical(input) < 0 {
+    /// Advance attack and hitstun timers. Either one ending makes the fighter
+    /// Idle, and so actionable again on this same tick.
+    fn tick_action(&mut self) {
+        if let Some(attack) = self.current_attack() {
+            self.action_frame += 1;
+            if self.action_frame >= attack.total() {
+                self.action = Action::Idle;
+            }
+        } else if self.action == Action::Hitstun {
+            self.hitstun -= 1;
+            self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION);
+            if self.hitstun == 0 {
+                self.action = Action::Idle;
+                self.vx = 0;
+            }
+        }
+    }
+
+    fn ground_control(&mut self, held: Input, pressed: Input) {
+        // Attacks beat movement: pressing LIGHT while walking attacks.
+        if is_held(pressed, LIGHT) {
+            self.start_attack(Action::Light);
+            return;
+        }
+        if is_held(pressed, HEAVY) {
+            self.start_attack(Action::Heavy);
+            return;
+        }
+
+        let dir = horizontal(held);
+        if vertical(held) < 0 {
             // No air control: the horizontal speed is fixed at takeoff.
             self.action = Action::Jump;
             self.vx = dir * JUMP_X_SPEED;
             self.vy = JUMP_VELOCITY;
-        } else if vertical(input) > 0 {
+        } else if vertical(held) > 0 {
             self.action = Action::Crouch;
             self.vx = 0;
         } else if dir != 0 {
@@ -135,10 +233,36 @@ impl Fighter {
         }
     }
 
+    /// Attacks root the fighter in place for their whole duration.
+    fn start_attack(&mut self, action: Action) {
+        self.action = action;
+        self.action_frame = 0;
+        self.attack_connected = false;
+        self.vx = 0;
+    }
+
+    /// Called when `attack` from an attacker facing `from_facing` connects.
+    /// Interrupts whatever this fighter was doing, including its own attack.
+    pub fn take_hit(&mut self, attack: Attack, from_facing: i8) {
+        self.health = (self.health - attack.damage).max(0);
+        self.action = Action::Hitstun;
+        self.hitstun = attack.hitstun;
+        self.vx = from_facing as i32 * attack.knockback;
+    }
+
     fn land(&mut self) {
         self.action = Action::Idle;
         self.vx = 0;
         self.vy = 0;
+    }
+}
+
+/// Move `v` toward 0 by `amount` without overshooting past 0.
+fn toward_zero(v: i32, amount: i32) -> i32 {
+    if v > 0 {
+        (v - amount).max(0)
+    } else {
+        (v + amount).min(0)
     }
 }
 
@@ -166,20 +290,20 @@ mod tests {
     #[test]
     fn walking_forward_is_faster_than_back() {
         let mut f = Fighter::new(MID, 1);
-        f.step(RIGHT);
+        f.step(RIGHT, 0);
         assert_eq!(f.x, MID + WALK_FORWARD_SPEED);
         assert_eq!(f.action, Action::Walk);
 
         let mut f = Fighter::new(MID, 1);
-        f.step(LEFT);
+        f.step(LEFT, 0);
         assert_eq!(f.x, MID - WALK_BACK_SPEED);
     }
 
     #[test]
     fn releasing_stops_immediately() {
         let mut f = Fighter::new(MID, 1);
-        f.step(RIGHT);
-        f.step(0);
+        f.step(RIGHT, 0);
+        f.step(0, 0);
         assert_eq!(f.x, MID + WALK_FORWARD_SPEED);
         assert_eq!(f.action, Action::Idle);
     }
@@ -187,7 +311,7 @@ mod tests {
     #[test]
     fn left_and_right_together_is_neutral() {
         let mut f = Fighter::new(MID, 1);
-        f.step(LEFT | RIGHT);
+        f.step(LEFT | RIGHT, 0);
         assert_eq!(f.x, MID);
         assert_eq!(f.action, Action::Idle);
     }
@@ -196,7 +320,7 @@ mod tests {
     fn standing_still_on_the_floor_has_no_gravity() {
         let mut f = Fighter::new(MID, 1);
         for _ in 0..100 {
-            f.step(0);
+            f.step(0, 0);
         }
         assert_eq!((f.y, f.vy), (FLOOR_Y, 0));
     }
@@ -205,16 +329,16 @@ mod tests {
     fn jump_leaves_floor_and_lands_after_jump_ticks() {
         let mut f = Fighter::new(MID, 1);
         // UP only matters on the takeoff tick; after that input is ignored.
-        f.step(UP);
+        f.step(UP, 0);
         assert!(f.is_airborne());
         assert!(f.y < FLOOR_Y);
         let mut highest = f.y;
         for _ in 2..JUMP_TICKS {
-            f.step(0);
+            f.step(0, 0);
             assert!(f.is_airborne());
             highest = highest.min(f.y);
         }
-        f.step(0);
+        f.step(0, 0);
         assert_eq!(f.y, FLOOR_Y);
         assert_eq!(f.action, Action::Idle);
         // 157.5 px peak, see JUMP_VELOCITY.
@@ -224,11 +348,11 @@ mod tests {
     #[test]
     fn no_air_control() {
         let mut f = Fighter::new(MID, 1);
-        f.step(UP | RIGHT);
+        f.step(UP | RIGHT, 0);
         let vx = f.vx;
         assert_eq!(vx, JUMP_X_SPEED);
         for _ in 0..10 {
-            f.step(LEFT);
+            f.step(LEFT, 0);
             assert_eq!(f.vx, vx);
         }
     }
@@ -236,7 +360,7 @@ mod tests {
     #[test]
     fn crouch_stops_walking() {
         let mut f = Fighter::new(MID, 1);
-        f.step(DOWN | RIGHT);
+        f.step(DOWN | RIGHT, 0);
         assert_eq!(f.x, MID);
         assert_eq!(f.action, Action::Crouch);
         assert_eq!(f.height(), CROUCH_HEIGHT);
@@ -247,13 +371,13 @@ mod tests {
         let half = FIGHTER_WIDTH / 2;
         let mut f = Fighter::new(half + 1, -1);
         for _ in 0..10 {
-            f.step(LEFT);
+            f.step(LEFT, 0);
         }
         assert_eq!(f.x, half);
 
         let mut f = Fighter::new(STAGE_WIDTH - half - 1, 1);
         for _ in 0..10 {
-            f.step(RIGHT);
+            f.step(RIGHT, 0);
         }
         assert_eq!(f.x, STAGE_WIDTH - half);
     }
@@ -266,8 +390,99 @@ mod tests {
         f.face(MID);
         assert_eq!(f.facing, -1, "equal x keeps old facing");
 
-        f.step(UP);
+        f.step(UP, 0);
         f.face(MID + 100);
         assert_eq!(f.facing, -1, "no turning in the air");
+    }
+
+    use crate::sim::attack::LIGHT_ATTACK;
+
+    #[test]
+    fn attack_starts_on_press_and_roots_in_place() {
+        let mut f = Fighter::new(MID, 1);
+        f.step(LIGHT | RIGHT, LIGHT);
+        assert_eq!(f.action, Action::Light);
+        assert_eq!(f.x, MID);
+    }
+
+    #[test]
+    fn holding_the_button_does_not_start_an_attack() {
+        let mut f = Fighter::new(MID, 1);
+        f.step(LIGHT, 0);
+        assert_eq!(f.action, Action::Idle);
+    }
+
+    #[test]
+    fn attack_lasts_exactly_its_total_frames() {
+        let mut f = Fighter::new(MID, 1);
+        f.step(LIGHT, LIGHT);
+        for _ in 1..LIGHT_ATTACK.total() {
+            f.step(RIGHT, 0);
+            assert_eq!(f.action, Action::Light);
+        }
+        // Free again: this tick's input is used straight away.
+        f.step(RIGHT, 0);
+        assert_eq!(f.action, Action::Walk);
+    }
+
+    #[test]
+    fn hitbox_exists_only_on_active_frames() {
+        let mut f = Fighter::new(MID, 1);
+        f.step(LIGHT, LIGHT);
+        let mut active = vec![];
+        for frame in 0..LIGHT_ATTACK.total() {
+            if f.active_hitbox().is_some() {
+                active.push(frame);
+            }
+            f.step(0, 0);
+        }
+        assert_eq!(active, vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn hitstun_blocks_input_then_ends() {
+        let mut f = Fighter::new(MID, -1);
+        f.take_hit(LIGHT_ATTACK, 1);
+        assert_eq!(f.health, MAX_HEALTH - LIGHT_ATTACK.damage);
+        for _ in 1..LIGHT_ATTACK.hitstun {
+            f.step(LEFT, LIGHT);
+            assert_eq!(f.action, Action::Hitstun);
+        }
+        f.step(LEFT, LIGHT);
+        assert_eq!(f.action, Action::Light, "acts on the tick hitstun ends");
+    }
+
+    #[test]
+    fn knockback_slows_down_during_hitstun() {
+        let mut f = Fighter::new(MID, -1);
+        f.take_hit(LIGHT_ATTACK, 1);
+        let mut last_vx = f.vx;
+        assert!(last_vx > 0);
+        for _ in 1..LIGHT_ATTACK.hitstun {
+            f.step(0, 0);
+            assert!(f.vx <= last_vx && f.vx >= 0);
+            last_vx = f.vx;
+        }
+        assert!(f.x > MID);
+    }
+
+    #[test]
+    fn hit_in_the_air_still_falls() {
+        let mut f = Fighter::new(MID, 1);
+        f.step(UP, 0);
+        f.take_hit(LIGHT_ATTACK, -1);
+        for _ in 0..60 {
+            f.step(0, 0);
+        }
+        assert_eq!(f.y, FLOOR_Y);
+        assert!(f.is_actionable());
+    }
+
+    #[test]
+    fn health_never_goes_below_zero() {
+        let mut f = Fighter::new(MID, 1);
+        f.health = 10;
+        f.take_hit(LIGHT_ATTACK, 1);
+        assert_eq!(f.health, 0);
     }
 }

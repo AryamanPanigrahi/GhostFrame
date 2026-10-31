@@ -2,8 +2,11 @@
 //! state and the same inputs, `advance` must produce the same result on every
 //! machine, because rollback re-runs it and both peers run it independently.
 
+pub mod attack;
 pub mod fighter;
+pub mod rect;
 
+use attack::Attack;
 use fighter::{Fighter, SUBPIXELS};
 
 /// One player's buttons for one tick, packed into bits (DESIGN.md section 4).
@@ -26,8 +29,8 @@ pub fn is_held(input: Input, button: Input) -> bool {
 pub struct GameState {
     /// Number of ticks simulated so far. At 60 ticks/s this is also the clock.
     pub frame: u32,
-    /// Inputs used on the most recent tick. G3 compares new inputs against
-    /// these to tell "just pressed" from "still held".
+    /// Inputs used on the most recent tick, to tell "just pressed" from
+    /// "still held". Part of the state so rollback restores it too.
     pub inputs: [Input; 2],
     pub fighters: [Fighter; 2],
 }
@@ -57,11 +60,43 @@ impl GameState {
         self.fighters[0].face(x1);
         self.fighters[1].face(x0);
 
-        self.fighters[0].step(inputs[0]);
-        self.fighters[1].step(inputs[1]);
+        // Pressed = down now and not down last tick.
+        let pressed0 = inputs[0] & !self.inputs[0];
+        let pressed1 = inputs[1] & !self.inputs[1];
+        self.fighters[0].step(inputs[0], pressed0);
+        self.fighters[1].step(inputs[1], pressed1);
+
+        // Check both hits before applying either. If P1's hit were applied
+        // first, P2 would already be in hitstun and their own hit would be
+        // cancelled: P1 would always win ties. This way both land (a trade).
+        let hit_on_1 = check_hit(&self.fighters[0], &self.fighters[1]);
+        let hit_on_0 = check_hit(&self.fighters[1], &self.fighters[0]);
+        if let Some(attack) = hit_on_1 {
+            self.fighters[0].attack_connected = true;
+            self.fighters[1].take_hit(attack, self.fighters[0].facing);
+        }
+        if let Some(attack) = hit_on_0 {
+            self.fighters[1].attack_connected = true;
+            self.fighters[0].take_hit(attack, self.fighters[1].facing);
+        }
 
         self.frame += 1;
         self.inputs = inputs;
+    }
+}
+
+/// The attack that `attacker` lands on `defender` this tick, if any: an
+/// active hitbox overlapping the defender's hurtbox, on a swing that hasn't
+/// already hit.
+fn check_hit(attacker: &Fighter, defender: &Fighter) -> Option<Attack> {
+    if attacker.attack_connected {
+        return None;
+    }
+    let hitbox = attacker.active_hitbox()?;
+    if hitbox.overlaps(&defender.hurtbox()) {
+        attacker.current_attack()
+    } else {
+        None
     }
 }
 
@@ -119,7 +154,13 @@ mod tests {
 
     #[test]
     fn same_inputs_give_same_state() {
-        let inputs = [[LEFT, 0], [LEFT | UP, DOWN], [0, HEAVY], [RIGHT, UP | LEFT]];
+        let inputs = [
+            [LEFT, 0],
+            [LEFT | UP, DOWN],
+            [0, HEAVY],
+            [RIGHT | LIGHT, UP | LEFT],
+            [HEAVY, 0],
+        ];
         let mut a = GameState::default();
         let mut b = GameState::default();
         for i in inputs {
@@ -127,5 +168,116 @@ mod tests {
             b.advance(i);
         }
         assert_eq!(a, b);
+    }
+
+    use attack::{HEAVY_ATTACK, LIGHT_ATTACK};
+    use fighter::{Action, MAX_HEALTH};
+
+    /// P1 at 400 px and P2 at `400 + gap` px, facing each other.
+    fn fighters_apart(gap_px: i32) -> GameState {
+        let mut state = GameState::default();
+        state.fighters[0].x = 400 * SUBPIXELS;
+        state.fighters[1].x = (400 + gap_px) * SUBPIXELS;
+        state
+    }
+
+    /// Run `ticks` ticks with the same inputs held throughout.
+    fn hold(state: &mut GameState, inputs: [Input; 2], ticks: u16) {
+        for _ in 0..ticks {
+            state.advance(inputs);
+        }
+    }
+
+    #[test]
+    fn light_hits_on_its_first_active_frame() {
+        let mut state = fighters_apart(100);
+        // Frames 0..3 are startup: 4 ticks, no hit yet.
+        hold(&mut state, [LIGHT, 0], LIGHT_ATTACK.startup);
+        assert_eq!(state.fighters[1].health, MAX_HEALTH);
+        // Frame 4 is the first active frame.
+        state.advance([LIGHT, 0]);
+        let p2 = &state.fighters[1];
+        assert_eq!(p2.health, MAX_HEALTH - LIGHT_ATTACK.damage);
+        assert_eq!(p2.action, Action::Hitstun);
+    }
+
+    #[test]
+    fn one_swing_hits_only_once() {
+        let mut state = fighters_apart(100);
+        hold(&mut state, [LIGHT, 0], LIGHT_ATTACK.total());
+        assert_eq!(state.fighters[1].health, MAX_HEALTH - LIGHT_ATTACK.damage);
+    }
+
+    #[test]
+    fn out_of_range_attack_whiffs() {
+        let mut state = fighters_apart(300);
+        hold(&mut state, [HEAVY, 0], HEAVY_ATTACK.total());
+        assert_eq!(state.fighters[1].health, MAX_HEALTH);
+    }
+
+    #[test]
+    fn light_whiffs_over_crouch_but_heavy_hits_it() {
+        let mut state = fighters_apart(100);
+        hold(&mut state, [LIGHT, DOWN], LIGHT_ATTACK.total());
+        assert_eq!(state.fighters[1].health, MAX_HEALTH);
+
+        let mut state = fighters_apart(100);
+        hold(&mut state, [HEAVY, DOWN], HEAVY_ATTACK.total());
+        assert_eq!(state.fighters[1].health, MAX_HEALTH - HEAVY_ATTACK.damage);
+    }
+
+    #[test]
+    fn knockback_pushes_the_defender_away() {
+        let mut state = fighters_apart(100);
+        let start_x = state.fighters[1].x;
+        hold(&mut state, [HEAVY, 0], HEAVY_ATTACK.total());
+        assert!(state.fighters[1].x > start_x);
+
+        // Mirrored: P2 hits P1, who is pushed left.
+        let mut state = fighters_apart(100);
+        let start_x = state.fighters[0].x;
+        hold(&mut state, [0, HEAVY], HEAVY_ATTACK.total());
+        assert!(state.fighters[0].x < start_x);
+    }
+
+    #[test]
+    fn simultaneous_hits_trade() {
+        let mut state = fighters_apart(100);
+        hold(&mut state, [HEAVY, HEAVY], HEAVY_ATTACK.total());
+        let expected = MAX_HEALTH - HEAVY_ATTACK.damage;
+        assert_eq!(state.fighters[0].health, expected);
+        assert_eq!(state.fighters[1].health, expected);
+    }
+
+    #[test]
+    fn faster_attack_interrupts_slower_one() {
+        let mut state = fighters_apart(100);
+        hold(&mut state, [LIGHT, HEAVY], HEAVY_ATTACK.total());
+        // Light (4 startup) lands before Heavy (10 startup) and cancels it.
+        assert_eq!(state.fighters[1].health, MAX_HEALTH - LIGHT_ATTACK.damage);
+        assert_eq!(state.fighters[0].health, MAX_HEALTH);
+    }
+
+    #[test]
+    fn light_on_hit_leaves_attacker_free_first() {
+        // Frame advantage: after a light hit the attacker recovers before the
+        // defender leaves hitstun, so the attacker gets to act first.
+        let mut state = fighters_apart(100);
+        state.advance([LIGHT, 0]);
+        let mut p1_free_at = None;
+        let mut p2_free_at = None;
+        for tick in 1..60 {
+            state.advance([0, 0]);
+            if p1_free_at.is_none() && state.fighters[0].is_actionable() {
+                p1_free_at = Some(tick);
+            }
+            if state.fighters[1].health < MAX_HEALTH
+                && p2_free_at.is_none()
+                && state.fighters[1].is_actionable()
+            {
+                p2_free_at = Some(tick);
+            }
+        }
+        assert!(p1_free_at.unwrap() < p2_free_at.unwrap());
     }
 }

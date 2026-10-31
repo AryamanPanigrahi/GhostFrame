@@ -1,8 +1,9 @@
 //! PLACEHOLDER debug view: grey boxes and text, just enough to see the
-//! movement and inputs work. The real look comes from third-party art and
+//! movement, attacks and hits work. The real look comes from third-party art and
 //! replaces this. Floats are fine here; this code never feeds back into the sim.
 
-use crate::sim::fighter::{Fighter, FIGHTER_WIDTH, FLOOR_Y, SUBPIXELS};
+use crate::sim::fighter::{Fighter, FLOOR_Y, SUBPIXELS};
+use crate::sim::rect::Rect;
 use crate::sim::{is_held, GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 use macroquad::prelude::*;
 
@@ -47,6 +48,24 @@ impl View {
         );
     }
 
+    /// A rectangle given in sim units (subpixels), filled or outlined.
+    fn sim_rect(&self, r: Rect, color: Color, filled: bool) {
+        let (x, y) = (px(r.left), px(r.top));
+        let (w, h) = (px(r.right - r.left), px(r.bottom - r.top));
+        if filled {
+            self.rect(x, y, w, h, color);
+        } else {
+            draw_rectangle_lines(
+                self.offset_x + x * self.scale,
+                self.offset_y + y * self.scale,
+                w * self.scale,
+                h * self.scale,
+                2.0,
+                color,
+            );
+        }
+    }
+
     fn text(&self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         draw_text(
             text,
@@ -81,14 +100,18 @@ fn px(subpixels: i32) -> f32 {
     subpixels as f32 / SUBPIXELS as f32
 }
 
-/// A box the size of the fighter, standing on its feet position, with a
-/// notch on the side it faces.
+/// The fighter drawn as its hurtbox, with a notch on the side it faces and
+/// an outline of its hitbox while an attack is active. Drawing the sim's own
+/// boxes means what you see is exactly what the hit detection uses.
 fn draw_fighter(view: &View, player: usize, fighter: &Fighter) {
-    let w = px(FIGHTER_WIDTH);
-    let h = px(fighter.height());
-    let left = px(fighter.x) - w / 2.0;
-    let top = px(fighter.y) - h;
-    view.rect(left, top, w, h, LIGHTGRAY);
+    let body = fighter.hurtbox();
+    view.sim_rect(body, LIGHTGRAY, true);
+    if let Some(hitbox) = fighter.active_hitbox() {
+        view.sim_rect(hitbox, RED, false);
+    }
+
+    let (left, top) = (px(body.left), px(body.top));
+    let w = px(body.right - body.left);
 
     let notch_x = if fighter.facing > 0 {
         left + w - 10.0
@@ -97,7 +120,7 @@ fn draw_fighter(view: &View, player: usize, fighter: &Fighter) {
     };
     view.rect(notch_x, top + 20.0, 10.0, 20.0, BLACK);
 
-    let label = format!("P{} {:?}", player + 1, fighter.action);
+    let label = format!("P{} {:?} {}hp", player + 1, fighter.action, fighter.health);
     view.text(&label, left, top - 10.0, 24.0, WHITE);
 }
 
