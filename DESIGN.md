@@ -28,6 +28,7 @@ riposte/
 ├── CLAUDE.md             # instructions for Claude sessions
 ├── DESIGN.md             # this file
 ├── LEARNING.md           # concept → explanation → where it lives in the code
+├── PROGRESS.md           # what's built so far: status, gist, files, decisions
 ├── SETUP.md              # every setup command, explained, to run by hand
 ├── rewind/               # rollback netcode library (crate: rewind)
 │   ├── src/
@@ -44,7 +45,13 @@ riposte/
 ├── game/                 # the fighting game (crate: riposte-game)
 │   └── src/
 │       ├── main.rs       # window, menus, main loop
+│       ├── clock.rs      # real time → fixed 1/60 s ticks
+│       ├── session.rs    # LocalSession (both players on one keyboard)
 │       ├── sim/          # deterministic simulation (NO floats)
+│       │   ├── mod.rs    # Input bits, GameState, advance, hit resolution
+│       │   ├── fighter.rs # movement + action state machine
+│       │   ├── attack.rs # frame data and hitboxes
+│       │   └── rect.rs   # AABB overlap
 │       ├── render/       # drawing (floats allowed here only)
 │       │   ├── mod.rs    # placeholder shapes now, third-party art later (Aryaman)
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
@@ -192,24 +199,59 @@ The seed in `MatchStart` initializes the game's PRNG so both clients start ident
 - The sim never reads anything from rendering or the window. The tick rate is fixed at 60/s.
 - Checksum uses FNV-1a over the state's fields (our own ~15-line implementation, so it's identical on native and WASM).
 
-**State sketch:**
+**State, as built (after G3):**
 ```rust
-#[derive(Clone)]
-struct GameState { frame: u32, fighters: [Fighter; 2], round: Round, rng: u64 }
-
-#[derive(Clone)]
-struct Fighter {
-    pos: (i32, i32), vel: (i32, i32), facing: i8,
-    health: i16, action: Action, action_frame: u16,
-    hitstun: u16,
+struct GameState {
+    frame: u32,
+    inputs: [Input; 2],       // last tick's inputs, for "just pressed"
+    fighters: [Fighter; 2],
+    // G4 adds: round: Round, rng: u64
 }
 
-enum Action { Idle, Walk, Jump, Crouch, Light, Heavy, Hitstun, Knockdown }
+struct Fighter {
+    x: i32, y: i32,           // centre of the feet, subpixels, y down
+    vx: i32, vy: i32,         // subpixels per tick
+    facing: i8,               // +1 right, -1 left
+    action: Action,
+    action_frame: u16,        // ticks since the attack started
+    hitstun: u16,             // ticks of hitstun left
+    health: i16,              // starts at 1000
+    attack_connected: bool,   // this swing already hit
+}
+
+enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun }  // G4 may add Knockdown
 ```
 
-**Attacks** have frame data, with startup, active and recovery frames. Hitboxes exist only during active frames and collide with the opponent's hurtbox (AABB overlap). Hits apply damage, hitstun and knockback.
+**Tick order** (`GameState::advance`):
+1. Both fighters turn to face each other, using start-of-tick positions.
+2. Presses are worked out as `held & !last_tick`.
+3. Both fighters step: timers, then input if actionable, then movement, floor and walls.
+4. Both hits are checked.
+5. Both hits are applied.
+6. `frame` and `inputs` are stored.
 
-**Stage:** logical 1280×720, flat floor, walls at both edges. Rendering scales this to the window.
+Reading before writing keeps the result independent of which player is updated first.
+
+**Movement:**
+- Walk: 4 px/tick forward, 3 back.
+- Jump: −15 px/tick takeoff, gravity 0.75 px/tick², so 41 ticks long with a 157.5 px peak. No air control.
+- Fighter box: 80×200 px, or 80×120 px crouching.
+- Left + right together is neutral.
+
+**Attacks** have frame data, with startup, active and recovery frames. Hitboxes exist only during active frames and collide with the opponent's hurtbox (AABB overlap). Hits apply damage, hitstun and knockback. One hit per swing; simultaneous hits trade.
+
+| | Startup | Active | Recovery | Damage | Hitstun | Knockback | Height | On hit |
+|---|---|---|---|---|---|---|---|---|
+| Light | 4 | 3 | 8 | 50 | 15 | 3 px/tick | high (130–160 px) | +4 |
+| Heavy | 10 | 4 | 20 | 120 | 20 | 6 px/tick | mid (60–110 px) | −4 |
+
+**Not built yet:** blocking, air attacks and pushboxes (see PROGRESS.md, open questions).
+
+**Stage:** logical 1280×720, flat floor at y = 640 px, walls at both edges. Rendering scales this to the window.
+
+**Controls (local):**
+- P1: A/D move, W jump, S crouch, F light, G heavy.
+- P2: arrow keys, K light, L heavy.
 
 **Game feel** is render-only and never affects the sim: hitstop shown visually, screen shake, hit flashes, health bar animation.
 
@@ -255,12 +297,14 @@ Ownership is by milestone and file, not by crate.
 
 ### Milestones
 
+✅ = done. Current status, test count and open questions are in PROGRESS.md.
+
 **Aryaman**
 - **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
 - **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
-- **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
-- **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
-- **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
+- ✅ **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
+- ✅ **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
+- ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
 - **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
 - **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
 - **G7:** Main menu (create room / join with code), WASM build.

@@ -71,6 +71,13 @@ cargo run -p riposte-game
 
 The first build downloads and compiles macroquad and takes a minute; later builds are incremental.
 
+Controls for local 2-player:
+
+| | Move | Jump | Crouch | Light | Heavy |
+|---|---|---|---|---|---|
+| P1 | A / D | W | S | F | G |
+| P2 | ← / → | ↑ | ↓ | K | L |
+
 Before committing, check formatting and lints:
 
 ```bash

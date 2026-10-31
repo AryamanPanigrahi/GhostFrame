@@ -6,7 +6,7 @@ Riposte is a 2-player online fighting game in Rust with rollback netcode. It's a
 - `game/`: the fighting game (crate `riposte-game`), built on macroquad
 - `server/`: WebSocket relay (crate `riposte-server`), built on tokio + axum
 
-**Read DESIGN.md before starting any task.** It holds the architecture, the frozen interface, the protocol, the milestones (R1–R6, S1–S2, G1–G7, I1–I3) and who owns what.
+**Read DESIGN.md before starting any task.** It holds the architecture, the frozen interface, the protocol, the milestones (R1–R6, S1–S2, G1–G7, I1–I3) and who owns what. **PROGRESS.md** says what's already built and what's still open.
 
 ## Ownership
 Ownership is by milestone and file, not by crate.
@@ -36,6 +36,13 @@ This project exists so both authors can understand and explain every line in int
 3. Prefer simple, explicit code over clever code. Avoid macros and heavy generics unless clearly needed. Comments explain *why*, not *what*.
 4. Commit after each milestone with a message explaining what changed and why.
 5. End every session with a summary: what was built, which files to read first and in what order, and open questions.
+6. **Keep the docs in step with the code.** At the end of every milestone, in the same commit:
+   - PROGRESS.md: status table, the milestone's gist, files, numbers, decisions, tests, open questions.
+   - DESIGN.md: repository layout, "state as built", and the ✅ on the milestone.
+   - SETUP.md: any new setup step, command or control.
+   - LEARNING.md: new concepts.
+
+   Anything a doc says that the code no longer does is a bug.
 
 ## Visuals: not Claude's job
 - Don't design graphics, art, sprites, colour schemes or the visual style. The humans source third-party models/art and decide how the game looks.
