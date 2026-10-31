@@ -77,3 +77,19 @@ This project exists so both authors can understand and explain every line in int
 - Relay server: `cargo run -p riposte-server`
 - Toy rewind example: `cargo run -p rewind --example boxes`
 - WASM build: see SETUP.md (added in milestone G7)
+
+## Handoff notes (read before starting a session)
+Current as of Oct 31. Update this when it changes.
+
+**Ram's branches, all pushed and waiting to merge:**
+- `rewind/r1-crate-skeleton` (R1) -> `rewind/r2-synctest` (R2) -> `server/s1-s2-relay` (S1, S2): stacked, so merge in that order.
+- `game/g6-game-feel` (G6): branched from `main`, independent of the stack above.
+
+**Aryaman's R3 (`P2PSession`) needs R1 merged first.** Ram's R5 (checksums, desync, stall) is blocked until R3 is pushed. Ram's R6 needs R1 too.
+
+**Ram edited two of Aryaman's files for G6**, with Ram's explicit approval since Aryaman wasn't actively pushing. Keep these changes when merging or rebasing:
+- `game/src/render/mod.rs`: `draw` now takes `&mut Effects`, `View::for_window` takes a shake offset, the fighter body colour goes through `flash_tint`, and `pub mod effects;` is added.
+- `game/src/main.rs`: creates `render::effects::Effects` and passes it to `render::draw`.
+Why: DESIGN.md says G6 is "called from render/mod.rs". The effects code itself is in the new `game/src/render/effects.rs`, which only reads `GameState`.
+
+G6 is only partly done: no hitstop visuals (the sim has no hitstop), no health-bar animation (needs G4), no frame-data tuning (`sim/attack.rs` is Aryaman's). See PROGRESS.md.
