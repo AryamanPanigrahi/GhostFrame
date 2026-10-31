@@ -37,7 +37,7 @@ Desktop:
 cargo run -p riposte-game
 ```
 
-Browser (one-time setup and details in SETUP.md section 5):
+Browser (one-time setup and details in SETUP.md section 9):
 
 ```bash
 ./scripts/build-web.sh

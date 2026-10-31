@@ -2,5 +2,4 @@
 # one target/ folder, so they share dependency versions and build output.
 [workspace]
 resolver = "2"
-# Ram adds "server" (S1) here when that crate is created.
-members = ["game", "rewind"]
+members = ["game", "rewind", "server"]

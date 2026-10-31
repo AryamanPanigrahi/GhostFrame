@@ -383,7 +383,7 @@ Each pause has a `timer` that counts down once per tick; at 0, `tick_round` move
 
 **Why:** It's one codebase for desktop and browser, and the sim is integer-only, so it gives identical results on both. That's essential for a native player against a browser player. The JS bundle must come from the *same* macroquad version as the Rust side, because the two halves call each other by name.
 
-**Where:** `web/index.html`, `web/mq_js_bundle.js`, `scripts/build-web.sh`. Steps in SETUP.md section 5.
+**Where:** `web/index.html`, `web/mq_js_bundle.js`, `scripts/build-web.sh`. Steps in SETUP.md section 9.
 
 ---
 
@@ -455,3 +455,51 @@ It's why DESIGN.md says the game must pass it before any online work is merged (
 **Why:** It proves rewind really is game-agnostic: it works with a game that isn't Riposte. It's also small enough to debug rewind itself without the fighting game in the way, and `cargo test` builds it, so an API change that breaks it is caught.
 
 **Where:** `rewind/examples/boxes.rs`.
+
+---
+
+## Relay server
+
+**What:** A program that sits between two players and passes bytes from one to the other. It pairs them by a 4-letter room code, tells each which player they are, and then forwards whatever one sends to the other without reading it. Rollback needs this much only because browsers can't connect to each other directly.
+
+**Why "dumb":** Each client runs the whole game and only inputs travel, so the server never needs to understand the game. It is a few hundred lines, has no game logic to get wrong, and the same relay works for any `Transport` the clients speak.
+
+**The lifecycle:**
+1. A client connects to `/ws` and sends `CreateRoom`. The server makes a free 4-letter code and replies `RoomCreated`.
+2. The second client connects and sends `JoinRoom { code }`. The server picks one random seed and sends `MatchStart` to both, with `player_index` 0 for the host and 1 for the guest. The same seed means both games' PRNGs start identically.
+3. From then on each `Relay(bytes)` goes to the other player unchanged.
+4. When either connection ends, the other gets `PeerLeft`, the room is deleted, and the server closes that connection. To play again, a client reconnects.
+
+**Bad requests:** the protocol has no error message, and it is frozen. So a client that joins an unknown or full room, sends bytes that don't decode, sends a message over 16 KiB, or creates a second room is simply disconnected. The client sees a closed socket.
+
+**Where:** `server/src/protocol.rs` (the two message enums), `server/src/rooms.rs` (`Rooms::create_room`, `join_room`, `relay`, `leave`), `server/src/lib.rs` (`handle_socket`). Tests: unit tests in `rooms.rs`, and `server/tests/relay.rs` which runs a real server and real WebSocket clients.
+
+---
+
+## Async tasks and channels (tokio)
+
+**What:** An *async runtime* runs thousands of lightweight tasks on a handful of OS threads. A task that is waiting for the network gives up its thread until bytes arrive. Here each connection is one task, `handle_socket`.
+
+**Why a channel:** Player A's task needs to push bytes into player B's socket, but only B's task owns that socket. So every connection has an *outbox*, a channel (`mpsc`: many senders, one receiver). A's task drops a message into B's outbox, and B's task, which is waiting in `tokio::select!` on "socket has data" or "outbox has a message", writes it out. The room logic only ever touches outboxes, never sockets, which is why `rooms.rs` can be unit tested with no network.
+
+**Where:** `server/src/lib.rs` (`handle_socket` and its `select!` loop), `server/src/rooms.rs` (`Outbox`).
+
+---
+
+## Shared state behind a Mutex
+
+**What:** All rooms live in one `Rooms` value that every connection task needs to change. `Arc<Mutex<Rooms>>` shares it: `Arc` is a reference-counted pointer so many tasks can own it, and `Mutex` lets one task at a time edit it.
+
+**Why a plain `std` Mutex and not tokio's:** we only hold the lock for a few map operations and never across an `.await`. Holding a std lock across an await can stall other tasks, so the rule is: lock, edit, unlock, then await.
+
+**Where:** `AppState` in `server/src/lib.rs`.
+
+---
+
+## Idle timeouts
+
+**What:** A room remembers the time of its last activity (create, join, or a relayed message). A background task wakes every 30 seconds and deletes rooms that have been quiet for more than 5 minutes, telling their players `PeerLeft`.
+
+**Why:** Without it, abandoned rooms (someone creates a room, shares the code, never joins) would pile up forever. A live match is never idle, because both clients send inputs 60 times a second.
+
+**Where:** `Rooms::sweep_idle` in `server/src/rooms.rs`, `spawn_idle_sweeper` in `server/src/lib.rs`. Tested with fake `Instant`s in `sweep_removes_only_rooms_idle_past_the_limit`, and for real in `idle_rooms_are_deleted`.
