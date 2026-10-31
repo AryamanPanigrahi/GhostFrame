@@ -13,7 +13,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G2: fixed-point movement | Aryaman | ✅ Done |
 | G3: attacks, frame data, hitboxes, damage, hitstun, knockback | Aryaman | ✅ Done |
 | G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | ✅ Done |
-| G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (unblocked: R2 is on `main`) |
+| G5: `RollbackGame` + `SyncTestSession` | Aryaman | ✅ Done: passes the sync test |
 | G6: game feel (render-only) | Ram | Partly done: flash + shake (no hitstop visuals, health-bar animation or frame-data tuning yet, see below) |
 | G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
@@ -25,7 +25,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | S1, S2: relay server | Ram | ✅ Done |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 135 tests, all passing (`cargo test --workspace`): 39 in `rewind`, 79 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 138 tests, all passing (`cargo test --workspace`): 39 in `rewind`, 82 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -257,6 +257,30 @@ cargo run -p rewind --example boxes
 ```bash
 cargo run -p riposte-server
 ```
+
+---
+
+## G5: `RollbackGame` and the sync test (Aryaman)
+
+**Gist:**
+- `GameState` implements rewind's `RollbackGame`. The snapshot is a full clone of the state, `advance` and `checksum` are the game's own, and `Input` is the `u16` bitmask.
+- Riposte passes rewind's `SyncTestSession`: bot-vs-bot for 6000 frames on each of 4 seeds, rolling back 8 frames every tick, with every checksum matching. **This is the gate DESIGN.md sets before any online work.**
+
+**Files:** `game/src/sim/rollback.rs` (the impl and the tests); `game/Cargo.toml` (`rewind` as a path dependency).
+
+**Coverage per seed:** about 100 hits, 30–45 jumps, 4 KOs, 4 round ends, 1–2 full matches. The test fails if any of these is too low.
+
+**Checked that it catches bugs:** two bugs were planted on purpose and removed afterwards.
+- `load` forgetting last tick's inputs: desync at frame 60.
+- A hidden global counter changing knockback: desync at frame 163.
+
+**Tests:** 3 new (sync test with coverage, save/load round trip, trait methods equal the game's).
+
+```bash
+cargo test -p riposte-game sync -- --nocapture
+```
+
+**Not covered by this test:** native vs WASM producing identical results. The sim is integer-only, so it should, but that is first truly checked in I2, when a browser plays a native client.
 
 ---
 

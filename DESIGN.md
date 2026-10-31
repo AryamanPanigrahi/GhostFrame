@@ -57,7 +57,8 @@ riposte/
 │       │   ├── rect.rs   # AABB overlap
 │       │   ├── round.rs  # round/match phases and timings
 │       │   ├── rng.rs    # seeded xorshift64 PRNG
-│       │   └── checksum.rs # FNV-1a hash for desync detection
+│       │   ├── checksum.rs # FNV-1a hash for desync detection
+│       │   └── rollback.rs # impl RollbackGame for GameState + sync test (G5)
 │       ├── render/       # drawing (floats allowed here only)
 │       │   ├── mod.rs    # placeholder shapes now, third-party art later (Aryaman)
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
@@ -329,7 +330,7 @@ Ownership is by milestone and file, not by crate.
 - ✅ **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
 - ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
 - ✅ **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
-- **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
+- ✅ **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.** *Passes: 4 seeds × 6000 frames, 8-frame rollback every tick.*
 - ✅ **G7:** Main menu (create room / join with code), WASM build. *Online items show a notice until I1 connects them.*
 
 **Ram**

@@ -82,6 +82,7 @@ This project exists so both authors can understand and explain every line in int
 Current as of Oct 31. Update this when it changes; detailed status lives in PROGRESS.md.
 
 - **Merged to `main`:** R1, R2, S1, S2 and G6 (Ram), plus workspace, G1-G4 and G7 (Aryaman).
-- **R3 is done** (`rewind/src/session/p2p.rs`), so Ram's R5 can start: fill the `Vec<Event>` that `tick` returns, handle `PeerMsg::Checksum`, and add the stall. Until R5 lands, `P2PSession` panics if it has to roll back further than `max_prediction`. R6, G5 and R4 can start now.
+- **R3 is done** (`rewind/src/session/p2p.rs`), so Ram's R5 can start: fill the `Vec<Event>` that `tick` returns, handle `PeerMsg::Checksum`, and add the stall. Until R5 lands, `P2PSession` panics if it has to roll back further than `max_prediction`.
+- **G5 is done:** Riposte passes the sync test (`game/src/sim/rollback.rs`). For I1 the game still needs R5 (stall, desync) and R6 (WebSocket transport).
 - **G6 touches two of Aryaman's files, with Aryaman's approval:** `render/mod.rs` (`draw` takes `&mut Effects`, `View::for_window` takes a shake offset, `flash_tint`, `pub mod effects;`) and `main.rs` (each `LocalMatch` owns an `Effects`). The effects code itself is in `game/src/render/effects.rs` and only reads `GameState`.
 - **G6 is partly done:** no hitstop visuals (the sim has no hitstop), no health-bar animation (G4 is on `main` now, so this is unblocked), no frame-data tuning (`sim/attack.rs` is Aryaman's).

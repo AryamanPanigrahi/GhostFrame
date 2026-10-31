@@ -579,3 +579,35 @@ It's why DESIGN.md says the game must pass it before any online work is merged (
 **Why:** Normal Rust ownership allows either one owner or shared read-only access. A mailbox both ends write to needs shared *and* mutable access. In a single thread, `Rc<RefCell<..>>` is the standard tool. Across threads it would be `Arc<Mutex<..>>`.
 
 **Where:** `rewind/src/transport/memory.rs` (`Mailbox`, `memory_pair`).
+
+---
+
+## Implementing a library's trait for the game (G5)
+
+**What:** `impl RollbackGame for GameState` tells rewind how to handle Riposte:
+- `save` clones the whole state.
+- `load` copies a saved one back.
+- `advance` and `checksum` call the game's own functions.
+- `Input` is the `u16` bitmask.
+
+Rust allows this because `GameState` is our own type. The game crate depends on rewind through a *path dependency*, so Cargo builds it from the folder next door.
+
+**Why:** It's the whole point of the frozen interface. rewind never learns what a fighter is, and the game never learns how rollback works. The four methods are the only contact between them. Using the entire `GameState` as the snapshot is the simplest correct choice: it's a few hundred bytes, so copying it 60+ times a second is nothing, and a full copy can't forget a field.
+
+**A naming detail:** `GameState` already has inherent methods called `advance` and `checksum`, and the trait has methods with the same names. Inherent methods win in method-call syntax, so the trait impl calls `GameState::advance(self, ..)` explicitly to make it obvious which one runs.
+
+**Where:** `game/src/sim/rollback.rs`.
+
+---
+
+## The sync test on the real game
+
+**What:** `riposte_passes_the_sync_test` runs bot-vs-bot under rewind's `SyncTestSession`, rolling back 8 frames *every* tick, for 6000 frames on each of 4 seeds. Every frame is simulated once, then re-simulated 8 times from a loaded snapshot, and every checksum must match the first run.
+
+**Why it's believable:**
+- *Coverage is asserted, not assumed.* The test counts what each run went through: about 100 hits, 30–45 jumps, 4 KOs, 4 round ends and 1–2 full matches per seed. It fails if any of these is too low, so it can't pass by watching two idle fighters.
+- *It catches real bugs.* Two bugs were planted on purpose and both failed with the exact frame. In the first, `load` forgot last tick's inputs: desync at frame 60, the first frame of the fight. In the second, a hidden global counter changed knockback: desync at frame 163, the first hit.
+
+**Why it matters:** DESIGN.md requires this before any online work. A sync-test failure on one machine in milliseconds is far easier to debug than a desync between two laptops minutes into a match.
+
+**Where:** `game/src/sim/rollback.rs` (tests: `Bot`, `Coverage`, `sync_test`). Run with `cargo test -p riposte-game sync -- --nocapture`.

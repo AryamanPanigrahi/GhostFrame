@@ -735,6 +735,7 @@ name = "riposte-game"
 version = "0.1.0"
 dependencies = [
  "macroquad",
+ "rewind",
 ]
 
 [[package]]

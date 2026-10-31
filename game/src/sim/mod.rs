@@ -7,6 +7,7 @@ pub mod checksum;
 pub mod fighter;
 pub mod rect;
 pub mod rng;
+pub mod rollback;
 pub mod round;
 
 use attack::Attack;

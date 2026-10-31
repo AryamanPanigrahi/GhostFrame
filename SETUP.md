@@ -107,6 +107,14 @@ Test only the rollback library:
 cargo test -p rewind
 ```
 
+Run Riposte itself under the sync test (G5): 4 seeds × 6000 frames of bot-vs-bot, rolling back 8 frames every tick. `--nocapture` prints how many hits, KOs and matches each run covered:
+
+```bash
+cargo test -p riposte-game sync -- --nocapture
+```
+
+The game uses `rewind` as a *path dependency* (`rewind = { path = "../rewind" }` in `game/Cargo.toml`): Cargo builds it from the folder next door instead of downloading it, so there's nothing to install.
+
 Run rewind's toy game under the sync test (and the deliberately broken version, which should fail with a desync):
 
 ```bash
