@@ -13,19 +13,19 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G2: fixed-point movement | Aryaman | ✅ Done |
 | G3: attacks, frame data, hitboxes, damage, hitstun, knockback | Aryaman | ✅ Done |
 | G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | ✅ Done |
-| G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (needs R2) |
-| G6: game feel (render-only) | Ram | Not started |
+| G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (unblocked: R2 is on `main`) |
+| G6: game feel (render-only) | Ram | Partly done: flash + shake (no hitstop visuals, health-bar animation or frame-data tuning yet, see below) |
 | G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
-| R1: crate skeleton, `api.rs`, `InputQueue` | Ram | Not started |
-| R2: `SyncTestSession` + `boxes` example | Ram | Not started |
-| R3: `P2PSession` | Aryaman | Not started (needs R1) |
+| R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
+| R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
+| R3: `P2PSession` | Aryaman | Not started (unblocked: R1 is on `main`) |
 | R4: fake-network transport + convergence tests | Aryaman | Not started |
 | R5: checksums, desync, stall | Ram | Not started (needs R3) |
 | R6: WebSocket transport | Ram | Not started |
-| S1, S2: relay server | Ram | Not started |
+| S1, S2: relay server | Ram | ✅ Done |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 70 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
+**Tests:** 118 tests, all passing (`cargo test --workspace`): 22 in `rewind`, 79 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -199,6 +199,87 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 
 ---
 
+## R1: rewind crate skeleton, `api.rs`, `InputQueue` (Ram)
+
+**Gist:**
+- The `rewind` crate exists and `api.rs` holds `RollbackGame` and `Transport` exactly as in DESIGN.md section 4, plus two shared definitions: `type Frame = u32` and the `Event` enum (Desync, Stalled, Disconnected).
+- `InputQueue` stores one player's inputs in frame order. It predicts unknown frames as the last confirmed input, and when the real input arrives it records the earliest wrong frame, which is where a session rolls back to.
+
+**Files:** `rewind/src/api.rs`, `rewind/src/input_queue.rs`, `rewind/src/lib.rs`, `rewind/Cargo.toml`.
+
+**Decisions:**
+- Inputs must arrive in order: gaps are rejected, and repeats from redundant resends are ignored.
+- `reset_prediction` is for the session to call on rollback.
+- `discard_before` keeps memory bounded.
+- `serde` is the only dependency.
+
+**Tests:** 15 unit tests.
+
+**Open for R3 (from Ram):** `input_delay` isn't handled by `InputQueue`. The session should fill the local queue's first `input_delay` frames with default inputs.
+
+---
+
+## R2: `SyncTestSession` and the boxes toy game (Ram)
+
+**Gist:**
+- Every tick, `SyncTestSession` advances one frame and records the state before it, the inputs and the checksum after it.
+- It then loads the state from `check_distance` frames back, replays them, and fails with a `SyncTestError` (frame, expected, actual) on the first mismatching checksum.
+- `examples/boxes.rs` is a tiny deterministic game that passes it, rolling back 8 frames every tick for 600 frames. `-- --broken` shows a failure.
+
+**Files:** `rewind/src/session/synctest.rs`, `rewind/src/session/mod.rs`, `rewind/examples/boxes.rs`.
+
+**Decisions:**
+- It returns a `Result` instead of `Event::Desync`: a failing sync test is a bug to stop on, not a runtime event.
+- It keeps only the last `check_distance` records, so memory stays constant.
+
+**Tests:** 7 unit tests, including a game whose `save()` forgets a field, caught at frame 0.
+
+```bash
+cargo run -p rewind --example boxes
+```
+
+---
+
+## S1, S2: relay server (Ram)
+
+**Gist:**
+- **Pairing:** `riposte-server` serves a WebSocket route `/ws` that pairs two players by a 4-letter room code. It sends both `MatchStart` (player index 0/1 and one shared random seed), then forwards `Relay` bytes unchanged.
+- **Leaving:** a disconnect sends `PeerLeft` and deletes the room, and rooms idle for 5 minutes are swept.
+- **Bad messages close the connection:** an unknown or full room, undecodable bytes, messages over 16 KiB, or creating a room twice. The frozen `ServerMsg` has no error variant to report them with.
+- **Running it:** logs via `tracing` (`RUST_LOG`), port from `PORT`, graceful shutdown, and a two-stage Dockerfile.
+
+**Files:** `server/src/rooms.rs` (room logic, no sockets), `server/src/lib.rs` (axum handler, one task per connection), `server/src/protocol.rs`, `server/src/main.rs`, `server/tests/relay.rs`, `Dockerfile`, `.dockerignore`.
+
+**Dependencies:** `tokio`, `axum` (ws), `serde` + `bincode`, `tracing` + `tracing-subscriber`, `anyhow`. Plus the dev-only `tokio-tungstenite` and `futures-util` for the real-socket tests, justified in SETUP.md section 6.
+
+**Tests:** 11 unit tests on the room logic, plus 6 integration tests that drive a real server over real WebSockets.
+
+```bash
+cargo run -p riposte-server
+```
+
+---
+
+## G6: game feel (render-only)
+
+**Gist:** A hit now flashes the defender red and shakes the view, harder and longer for bigger hits (light: 5 px for 3 ticks; heavy: 12 px for 8 ticks). `Effects` only reads `GameState`; it never writes to it.
+
+**Files:** `game/src/render/effects.rs` (new), plus small wiring in `game/src/render/mod.rs` (`draw` takes `&mut Effects`, the view takes a shake offset, `flash_tint`) and `game/src/main.rs` (each `LocalMatch` owns an `Effects`, so a new match starts without a leftover shake). The `mod.rs` and `main.rs` edits touch Aryaman's files, as DESIGN.md says G6 is "called from render/mod.rs".
+
+**Decisions:**
+- Hits are detected by a health drop between two draws, so the sim needed no changes and no hit event.
+- Timers count sim ticks (frame delta), so they don't depend on frame rate.
+- Frame going backwards or health rising resets the baseline without firing effects.
+
+**Tests:** 9 in `effects.rs`: no hit, defender-only flash, fade in ticks, redraw doesn't fade, heavy > light, shake jitter and end, small hit doesn't cut a big shake, restart not mistaken for damage, health rising.
+
+**Not done:**
+- **Hitstop visuals:** the sim has no hitstop, so freezing the picture in render would show something the sim doesn't do. If wanted, hitstop should be added to the sim first (Aryaman's files).
+- **Health-bar animation:** unblocked now that G4's health bars are on `main`.
+- **Frame-data tuning:** needs edits to `sim/attack.rs`, which is Aryaman's. Needs a playtest and agreement first.
+
+---
+
 ## Open questions
 
 - **Blocking** isn't in any milestone, so G4 doesn't have it. Suggestion: hold back to block, as a small step before G5.
@@ -208,5 +289,5 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 - **Tuning:** all movement and frame-data numbers are first guesses. Ram's G6 includes frame-data tuning.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.
 - **Main loop floats:** `main.rs` converts macroquad's `f64` time to integers once. The "floats only in `render/`" rule is read as applying to the sim; say if it should be stricter.
-- **R3 timing:** R3 needs Ram's R1 (`rewind` crate + `api.rs`), which isn't on `main` yet.
+- **R3:** unblocked now that R1 is on `main`. Ram's note: `InputQueue` doesn't handle `input_delay`, so `P2PSession` should fill the first `input_delay` local frames with default inputs.
 - **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.

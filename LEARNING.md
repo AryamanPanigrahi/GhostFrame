@@ -503,3 +503,13 @@ It's why DESIGN.md says the game must pass it before any online work is merged (
 **Why:** Without it, abandoned rooms (someone creates a room, shares the code, never joins) would pile up forever. A live match is never idle, because both clients send inputs 60 times a second.
 
 **Where:** `Rooms::sweep_idle` in `server/src/rooms.rs`, `spawn_idle_sweeper` in `server/src/lib.rs`. Tested with fake `Instant`s in `sweep_removes_only_rooms_idle_past_the_limit`, and for real in `idle_rooms_are_deleted`.
+
+---
+
+## Game feel: render-only effects
+
+**What:** Hit flash and screen shake make a hit *feel* like something, but they live entirely in `render/`. `Effects` watches the sim's state each draw: when a fighter's health drops, a hit just landed, so that fighter flashes and the view shakes, harder and longer for bigger damage. Timers count down in sim ticks (the change in `game.frame`), not wall-clock time, so the effect lasts the same on a 60 Hz or a 240 Hz monitor, and redrawing the same tick twice doesn't fade it.
+
+**Why:** The sim must stay deterministic and identical on both peers, and rollback re-runs it. If effects were in the sim they would be part of the checksum and could desync. Reading the state and never writing to it keeps feel and fairness separate. A frame counter going backwards (restart) or health going up is treated as a new baseline, never as damage.
+
+**Where:** `game/src/render/effects.rs` (`Effects::observe`, `flash`, `shake_offset`), called from `draw` in `game/src/render/mod.rs`. Tests: the `tests` module in `effects.rs`.

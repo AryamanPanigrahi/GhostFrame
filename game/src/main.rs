@@ -44,6 +44,9 @@ struct LocalMatch {
     clock: FixedClock,
     /// Buttons seen on any frame since the last tick, per player.
     buffered: [sim::Input; 2],
+    /// Hit flash and screen shake (G6). Kept per match so a new match never
+    /// starts with a leftover shake.
+    effects: render::effects::Effects,
 }
 
 impl LocalMatch {
@@ -54,6 +57,7 @@ impl LocalMatch {
             // A fresh clock, so time spent in the menu isn't banked as ticks.
             clock: FixedClock::default(),
             buffered: [0, 0],
+            effects: render::effects::Effects::default(),
         }
     }
 
@@ -123,7 +127,7 @@ async fn main() {
                     switch_to = Some(App::Menu(Menu::default()));
                 }
                 local.update(elapsed);
-                render::draw(&local.game);
+                render::draw(&local.game, &mut local.effects);
             }
         }
         if let Some(next) = switch_to {

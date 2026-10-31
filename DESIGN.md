@@ -299,6 +299,7 @@ Reading before writing keeps the result independent of which player is updated f
 | tokio, axum | server | Async runtime + WebSocket server |
 | thiserror / anyhow | libs / binaries | Error handling |
 | tracing, tracing-subscriber | server | Logs |
+| tokio-tungstenite, futures-util | server (dev-dependencies, tests only) | WebSocket client so `server/tests/relay.rs` can drive a real server (added in S1) |
 
 Any new dependency must be justified in the session summary.
 
@@ -317,7 +318,7 @@ Ownership is by milestone and file, not by crate.
 
 ### Milestones
 
-✅ = done. Current status, test count and open questions are in PROGRESS.md.
+✅ = done, ◐ = partly done. Current status, test count and open questions are in PROGRESS.md.
 
 **Aryaman**
 - **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
@@ -334,9 +335,9 @@ Ownership is by milestone and file, not by crate.
 - ✅ **R2:** `SyncTestSession` + `examples/boxes.rs` toy game. *Needed by Aryaman for G5.*
 - **R5:** Checksum exchange, desync event, stall when too far ahead (builds on R3).
 - **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.
-- **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
-- **S2:** Disconnects, timeouts, logging, Dockerfile.
-- **G6:** Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
+- ✅ **S1:** Relay server: rooms, pairing, `MatchStart`, forwarding.
+- ✅ **S2:** Disconnects, timeouts, logging, Dockerfile.
+- ◐ **G6:** *(partly done: flash and shake; see PROGRESS.md)* Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
 - **I1:** Online native vs native through the relay, tested on two laptops.
