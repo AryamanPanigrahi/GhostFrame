@@ -112,6 +112,8 @@ pub trait Transport {
 }
 ```
 
+As built in R1, `api.rs` also holds two small shared definitions the sessions need: `type Frame = u32` (frame numbers, matching the protocol) and the `Event` enum below (`Desync { frame }`, `Stalled`, `Disconnected`).
+
 How the game uses a session, once per 1/60 s tick:
 
 ```rust
@@ -266,7 +268,7 @@ Ownership is by milestone and file, not by crate.
 - **G7:** Main menu (create room / join with code), WASM build.
 
 **Ram**
-- **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
+- ✅ **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
 - **R2:** `SyncTestSession` + `examples/boxes.rs` toy game. *Needed by Aryaman for G5.*
 - **R5:** Checksum exchange, desync event, stall when too far ahead (builds on R3).
 - **R6:** WebSocket transport (quad-net), with a native/WASM spike done first.

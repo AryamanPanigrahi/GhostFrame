@@ -15,6 +15,14 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 On Windows, download `rustup-init.exe` from https://rustup.rs instead.
 
+On Windows the default toolchain (`msvc`) links with Microsoft's C++ Build Tools, a separate multi-GB Visual Studio install. If you don't have them, use the `gnu` toolchain instead: it ships its own linker, so nothing else is needed. This is what Ram's machine uses:
+
+```bash
+rustup-init.exe -y --default-host x86_64-pc-windows-gnu --profile minimal -c rustfmt -c clippy
+```
+
+Then open a new terminal so `%USERPROFILE%\.cargo\bin` is on `PATH`.
+
 Then add the formatter and linter. CLAUDE.md requires code to be `cargo fmt` clean and `cargo clippy` clean:
 
 ```bash
@@ -51,11 +59,24 @@ We don't turn on macroquad's `audio` feature, so ALSA (`libasound2-dev`) isn't n
 **What:** The root `Cargo.toml` declares a *workspace*, a group of crates that share one `Cargo.lock` (exact dependency versions) and one `target/` build folder.
 **Why:** `rewind`, `riposte-game` and `riposte-server` are built and tested together with one command. Each crate still has its own `Cargo.toml` listing its own dependencies.
 
-For now the workspace has only `game`. Ram adds `rewind` (R1) and `server` (S1) to `members` in the root `Cargo.toml` when creating those crates.
+The workspace has `game` and `rewind` (added in R1). Ram adds `server` (S1) to `members` in the root `Cargo.toml` when creating it.
 
 Nothing to install for this step. Cargo downloads crates (like macroquad) from crates.io automatically on the first build. `Cargo.lock` is committed, so everyone builds with the same versions.
 
-## 4. Build, test, run
+## 4. rewind's first dependency: serde
+
+**What:** `serde` is Rust's standard serialization framework. It defines two traits, `Serialize` (turn a value into bytes or text) and `Deserialize` (turn them back), that formats like `bincode` plug into.
+**Why:** In rewind's `RollbackGame` trait, a game's `Input` type must be `Serialize + DeserializeOwned`, because inputs are the one thing peers send each other. R1 only needs the traits, so the `derive` feature is not turned on yet.
+
+It's declared in `rewind/Cargo.toml`:
+
+```toml
+serde = "1"
+```
+
+Nothing to run: Cargo downloads it on the next build and records the exact version in `Cargo.lock`.
+
+## 5. Build, test, run
 
 ```bash
 cargo build --workspace
@@ -67,6 +88,12 @@ cargo test --workspace
 
 ```bash
 cargo run -p riposte-game
+```
+
+Test only the rollback library:
+
+```bash
+cargo test -p rewind
 ```
 
 The first build downloads and compiles macroquad and takes a minute; later builds are incremental.

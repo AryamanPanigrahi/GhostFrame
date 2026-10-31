@@ -1,0 +1,9 @@
+[package]
+name = "rewind"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Inputs are sent over the network, so `RollbackGame::Input` must be
+# serializable. Only the traits are needed here, not the derive macros.
+serde = "1"
