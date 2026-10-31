@@ -76,4 +76,4 @@ This project exists so both authors can understand and explain every line in int
 - Local 2-player: `cargo run -p riposte-game`
 - Relay server: `cargo run -p riposte-server`
 - Toy rewind example: `cargo run -p rewind --example boxes`
-- WASM build: see SETUP.md (added in milestone G7)
+- WASM build: `./scripts/build-web.sh`, then serve `web/` (SETUP.md section 5)

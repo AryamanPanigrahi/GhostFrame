@@ -87,3 +87,44 @@ cargo fmt --all --check
 ```bash
 cargo clippy --workspace -- -D warnings
 ```
+
+## 5. Browser (WASM) build
+
+**What:** WebAssembly (WASM) is a compact binary format that browsers run at near-native speed. Rust can compile to it through the `wasm32-unknown-unknown` *target*: "wasm32" is the CPU, and "unknown-unknown" means no particular vendor and no operating system, because the browser provides everything.
+
+**Why:** Milestone G7 / I2: Riposte should be playable from a link, with nothing to install.
+
+**Step 1: add the target (once).** This downloads the Rust standard library precompiled for WASM:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+**Step 2: build.** The script compiles the game for WASM in release mode and copies the result into `web/`:
+
+```bash
+./scripts/build-web.sh
+```
+
+It runs these two commands, which you can also run by hand (e.g. on Windows without bash):
+
+```bash
+cargo build -p riposte-game --release --target wasm32-unknown-unknown
+```
+
+```bash
+cp target/wasm32-unknown-unknown/release/riposte-game.wasm web/
+```
+
+**Step 3: serve `web/` and open it.** Browsers refuse to `fetch` a `.wasm` file from a `file://` page, so double-clicking `index.html` won't work; it has to come from a web server. Python's built-in one is enough:
+
+```bash
+python3 -m http.server 8000 --directory web
+```
+
+Then open http://localhost:8000 and click the page once so it receives keyboard input.
+
+**What's in `web/`:**
+- `index.html`: a full-page canvas with the id `glcanvas`, which macroquad draws into, plus two script tags.
+- `mq_js_bundle.js`: macroquad's JavaScript glue. It gives the WASM module WebGL, keyboard events and a clock. It's copied unchanged from macroquad 0.4.16's `js/` folder (MIT/Apache, like macroquad itself) and **must match the macroquad version in `game/Cargo.toml`**. If macroquad is upgraded, copy the new one from `~/.cargo/registry/src/*/macroquad-<version>/js/mq_js_bundle.js`.
+- `riposte-game.wasm`: the build output. It's in `.gitignore`, so it's rebuilt rather than committed.

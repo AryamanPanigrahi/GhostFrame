@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Riposte</title>
+    <style>
+        /* The canvas fills the page; the game letterboxes itself to 16:9. */
+        html, body, canvas {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: black;
+        }
+    </style>
+</head>
+<body>
+    <!-- macroquad's loader looks for a canvas with exactly this id. -->
+    <canvas id="glcanvas" tabindex="1"></canvas>
+    <!-- macroquad's JS glue (copied from macroquad 0.4.16's js/ folder; must
+         match the macroquad version in game/Cargo.toml). It gives the WASM
+         module WebGL, keyboard input and timing. -->
+    <script src="mq_js_bundle.js"></script>
+    <script>load("riposte-game.wasm");</script>
+</body>
+</html>

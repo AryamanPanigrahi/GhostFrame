@@ -1,1 +1,3 @@
 /target
+# Build output of scripts/build-web.sh
+/web/*.wasm

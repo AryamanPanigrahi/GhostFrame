@@ -2,6 +2,7 @@
 //! movement, attacks, hits and rounds work. The real look comes from third-party art and
 //! replaces this. Floats are fine here; this code never feeds back into the sim.
 
+use crate::menu::{Menu, Screen, MAIN_ITEMS, ROOM_CODE_LEN};
 use crate::sim::fighter::{Fighter, FLOOR_Y, MAX_HEALTH, SUBPIXELS};
 use crate::sim::rect::Rect;
 use crate::sim::round::{Phase, Round};
@@ -167,5 +168,50 @@ fn draw_held_buttons(view: &View, player: usize, input: Input) {
         let color = if is_held(input, *button) { WHITE } else { GRAY };
         view.rect(x, 80.0, 40.0, 40.0, color);
         view.text(name, x + 6.0, 108.0, 22.0, BLACK);
+    }
+}
+
+/// Placeholder menu: plain text, the selected item marked with ">".
+pub fn draw_menu(menu: &Menu) {
+    clear_background(BLACK);
+    let view = View::for_window();
+    view.rect(0.0, 0.0, LOGICAL_W, LOGICAL_H, DARKGRAY);
+    view.text("RIPOSTE", 80.0, 140.0, 72.0, WHITE);
+
+    match &menu.screen {
+        Screen::Main { selected } => {
+            for (i, item) in MAIN_ITEMS.iter().enumerate() {
+                let marker = if i == *selected { ">" } else { " " };
+                let line = format!("{marker} {item}");
+                view.text(&line, 80.0, 260.0 + i as f32 * 50.0, 36.0, WHITE);
+            }
+            view.text(
+                "Up/Down (or W/S) to choose, Enter to select",
+                80.0,
+                560.0,
+                24.0,
+                GRAY,
+            );
+        }
+        Screen::EnterCode { code } => {
+            view.text("Enter room code:", 80.0, 260.0, 36.0, WHITE);
+            // Show unfilled places as underscores: "AB__".
+            let shown = format!("{code:_<width$}", width = ROOM_CODE_LEN);
+            view.text(&shown, 80.0, 330.0, 60.0, WHITE);
+            view.text(
+                "Type letters, Enter to join, Esc to go back",
+                80.0,
+                560.0,
+                24.0,
+                GRAY,
+            );
+        }
+        Screen::Notice { message } => {
+            // draw_text doesn't wrap, so messages carry their own line breaks.
+            for (i, line) in message.lines().enumerate() {
+                view.text(line, 80.0, 260.0 + i as f32 * 40.0, 26.0, WHITE);
+            }
+            view.text("Enter or Esc to go back", 80.0, 560.0, 24.0, GRAY);
+        }
     }
 }

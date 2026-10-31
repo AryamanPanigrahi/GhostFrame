@@ -30,6 +30,8 @@ riposte/
 ├── LEARNING.md           # concept → explanation → where it lives in the code
 ├── PROGRESS.md           # what's built so far: status, gist, files, decisions
 ├── SETUP.md              # every setup command, explained, to run by hand
+├── scripts/build-web.sh  # WASM build into web/
+├── web/                  # browser build: index.html + macroquad's JS loader
 ├── rewind/               # rollback netcode library (crate: rewind)
 │   ├── src/
 │   │   ├── lib.rs
@@ -45,6 +47,7 @@ riposte/
 ├── game/                 # the fighting game (crate: riposte-game)
 │   └── src/
 │       ├── main.rs       # window, menus, main loop
+│       ├── menu.rs       # main menu: local / create room / join with code
 │       ├── clock.rs      # real time → fixed 1/60 s ticks
 │       ├── session.rs    # LocalSession (both players on one keyboard)
 │       ├── sim/          # deterministic simulation (NO floats)
@@ -58,7 +61,7 @@ riposte/
 │       ├── render/       # drawing (floats allowed here only)
 │       │   ├── mod.rs    # placeholder shapes now, third-party art later (Aryaman)
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
-│       └── input.rs      # keyboard → input bitmask
+│       └── input.rs      # keyboard → input bitmask and menu keys
 ├── server/               # WebSocket relay (crate: riposte-server)
 │   └── src/main.rs
 └── docs/
@@ -297,7 +300,7 @@ Reading before writing keeps the result independent of which player is updated f
 
 Any new dependency must be justified in the session summary.
 
-**Known risk:** WebSocket support from WASM via `quad-net`. Do a spike early in milestone R6 and G7. Fallback: online play native-only for v1, with the browser build offering local 2-player.
+**Known risk:** WebSocket support from WASM via `quad-net`. Do a spike early in milestone R6 and G7. Fallback: online play native-only for v1, with the browser build offering local 2-player. *Found in G7:* macroquad 0.4.16's `mq_js_bundle.js` fails to register its bundled quad-net plugin in the browser (`register_plugin is not defined`). The R6 spike should start there.
 
 ---
 
@@ -322,7 +325,7 @@ Ownership is by milestone and file, not by crate.
 - ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
 - ✅ **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
 - **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.**
-- **G7:** Main menu (create room / join with code), WASM build.
+- ✅ **G7:** Main menu (create room / join with code), WASM build. *Online items show a notice until I1 connects them.*
 
 **Ram**
 - **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.

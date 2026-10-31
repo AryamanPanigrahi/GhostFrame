@@ -337,3 +337,50 @@ Each pause has a `timer` that counts down once per tick; at 0, `tick_round` move
 **Order matters:** players are hashed P1 then P2, so swapping them gives a different checksum.
 
 **Where:** `game/src/sim/mod.rs` (`checksum`, `hash_round`), `game/src/sim/fighter.rs` (`hash_into`, `Action::tag`). Tests: `changing_any_part_of_the_state_changes_the_checksum`, `swapping_the_players_changes_the_checksum`, `numbers_are_little_endian`.
+
+---
+
+## The main menu (a state machine outside the sim)
+
+**What:** `Menu` has a `Screen`:
+- **Main:** a list with a selected item.
+- **EnterCode:** a 4-letter room code being typed.
+- **Notice:** a message plus "back".
+
+`Menu::handle` takes one `MenuKey` (Up, Down, Confirm, Back, Backspace, or a typed letter) and may return a `MenuAction` (StartLocal, CreateRoom, JoinRoom with the code). `main.rs` acts on the action. Room codes accept letters only, stored uppercase, exactly 4.
+
+**Why:** The same "pure logic + separate keyboard reading" split as the game input: `input.rs` turns real keys into `MenuKey`s, so the menu is tested without a window. The menu isn't part of the simulation, so none of the determinism rules apply to it. The two online items show a "not connected yet" notice until I1 wires them to the relay server.
+
+**Where:** `game/src/menu.rs`; `read_menu_keys` and `menu_keys_from` in `game/src/input.rs`; `draw_menu` in `game/src/render/mod.rs`; the `App` enum in `game/src/main.rs`.
+
+---
+
+## Switching screens in Rust (`App` and `switch_to`)
+
+**What:** `main.rs` holds `app: App`, which is either `Menu(Menu)` or `Local(LocalMatch)`. Inside `match &mut app { ... }` we're *borrowing* `app`, so we can't replace it there. Instead we set `switch_to = Some(next)` and do `app = next` after the match ends.
+
+**Why:** Rust forbids changing a value while something borrows it; that's how it prevents use-after-free bugs. Deciding inside and swapping afterwards is the standard way around it. Starting a match makes a fresh `LocalMatch` with a fresh `FixedClock`, so time spent in the menu isn't banked as game ticks.
+
+**Where:** `game/src/main.rs`, `main`, `App`, `LocalMatch::new`.
+
+---
+
+## Not losing quick taps (frames vs ticks again)
+
+**What:** Two fixes so a fast key tap always reaches the sim:
+1. **Within a frame:** a key counts as held if it's down now **or** was pressed since the last frame (`is_key_down || is_key_pressed`). A tap that goes down and up between two frames is otherwise invisible to `is_key_down`.
+2. **Across frames:** `LocalMatch` ORs each frame's input into `buffered` and only clears it after a tick runs. On a 144 Hz screen most frames run *no* tick, and a tap seen on one of those frames would otherwise never be applied.
+
+**Why:** Found by testing the browser build: at the ~30 fps of software rendering, a tap of the attack key was dropped. Online play will need the same care, because the input that rewind sends is whatever we sample.
+
+**Where:** `held_or_tapped` in `game/src/input.rs`; `LocalMatch::update` in `game/src/main.rs`.
+
+---
+
+## WebAssembly and the JS glue
+
+**What:** `cargo build --target wasm32-unknown-unknown` turns the same Rust code into a `.wasm` file. The browser can run it, but WASM on its own has no screen, keyboard or clock; it can only call functions the page hands it. `mq_js_bundle.js` is macroquad's JavaScript that hands it those functions (WebGL drawing, key events, time) and starts it via `load("riposte-game.wasm")`.
+
+**Why:** It's one codebase for desktop and browser, and the sim is integer-only, so it gives identical results on both. That's essential for a native player against a browser player. The JS bundle must come from the *same* macroquad version as the Rust side, because the two halves call each other by name.
+
+**Where:** `web/index.html`, `web/mq_js_bundle.js`, `scripts/build-web.sh`. Steps in SETUP.md section 5.

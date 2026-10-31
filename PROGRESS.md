@@ -15,7 +15,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | ✅ Done |
 | G5: `RollbackGame` + `SyncTestSession` | Aryaman | Not started (needs R2) |
 | G6: game feel (render-only) | Ram | Not started |
-| G7: menu, WASM build | Aryaman | Not started |
+| G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | Not started |
 | R2: `SyncTestSession` + `boxes` example | Ram | Not started |
 | R3: `P2PSession` | Aryaman | Not started (needs R1) |
@@ -25,15 +25,29 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | S1, S2: relay server | Ram | Not started |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 62 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
+**Tests:** 70 unit tests, all passing (`cargo test --workspace`). fmt and clippy clean.
 
 ---
 
 ## How to try what exists
 
+Desktop:
+
 ```bash
 cargo run -p riposte-game
 ```
+
+Browser (one-time setup and details in SETUP.md section 5):
+
+```bash
+./scripts/build-web.sh
+```
+
+```bash
+python3 -m http.server 8000 --directory web
+```
+
+Then open http://localhost:8000. Either way, the game starts at the main menu: Up/Down and Enter, then "Local 2-player". Esc goes back to the menu.
 
 | | Move | Jump | Crouch | Light | Heavy |
 |---|---|---|---|---|---|
@@ -155,6 +169,36 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 
 ---
 
+## G7: main menu, WASM build
+
+**Gist:**
+- The game opens on a main menu: Local 2-player, Create online room, Join online room. Joining asks for a 4-letter room code.
+- Local play works fully, and Esc returns to the menu. The two online items show an honest "not connected yet" notice, because the relay server (S1), the WebSocket transport (R6) and the online wiring (I1) don't exist yet. The menu already produces `CreateRoom` / `JoinRoom { code }` for I1 to hook up.
+- The same game builds for the browser: `scripts/build-web.sh` produces `web/riposte-game.wasm`, served next to `index.html` and macroquad's JS loader.
+
+**Files:**
+- `game/src/menu.rs` (`Menu`, `Screen`, `MenuKey`, `MenuAction`).
+- `game/src/input.rs` (`read_menu_keys`, `back_pressed`, `held_or_tapped`).
+- `game/src/main.rs` (`App`, `LocalMatch`, input buffering).
+- `game/src/render/mod.rs` (`draw_menu`, placeholder).
+- `web/index.html`, `web/mq_js_bundle.js`, `scripts/build-web.sh`.
+
+**Decisions:**
+- Room codes are 4 letters, case-insensitive (stored uppercase).
+- The JS loader is copied from macroquad 0.4.16 itself, so it always matches the Rust side; the `.wasm` is built, not committed.
+- Quick taps are never lost:
+  - A key counts if it was down *or* pressed during the frame.
+  - Input is buffered across frames until a tick consumes it.
+  - Both came from testing the browser build, where a fast tap was dropped.
+
+**Verified in a real browser:** headless Chromium in the sandbox loaded the WASM build. It went through the menu, typed a room code ("ab9cd" became "ABCD"), saw the online notice, and started a local match. Held keys walked both fighters, an instant tap started an attack, and Esc returned to the menu.
+
+**Tests:** menu navigation and wrap-around, local/create/join actions, code entry (letters only, uppercase, max 4, backspace, no short codes), back from code entry and notices, menu key mapping.
+
+**Found while testing:** macroquad's `mq_js_bundle.js` throws `register_plugin is not defined` on load. Its bundled quad-net WebSocket plugin assigns an undeclared variable in strict mode. It's harmless now, but quad-net is what R6 uses for WebSockets in the browser, so this is likely the first thing R6's WASM spike hits (see open questions).
+
+---
+
 ## Open questions
 
 - **Blocking** isn't in any milestone, so G4 doesn't have it. Suggestion: hold back to block, as a small step before G5.
@@ -165,3 +209,4 @@ Health is 1000. Knockback slows by 0.25 px/tick each tick of hitstun.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.
 - **Main loop floats:** `main.rs` converts macroquad's `f64` time to integers once. The "floats only in `render/`" rule is read as applying to the sim; say if it should be stricter.
 - **R3 timing:** R3 needs Ram's R1 (`rewind` crate + `api.rs`), which isn't on `main` yet.
+- **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.
