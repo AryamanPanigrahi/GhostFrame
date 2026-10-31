@@ -64,6 +64,8 @@ pub struct P2PSession<G: RollbackGame, T: Transport> {
     peer_ack: Frame,
     /// Total frames re-simulated by rollbacks, for tests and debug overlays.
     rollback_frames: u64,
+    /// The most frames a single rollback has re-simulated.
+    deepest_rollback: Frame,
 }
 
 impl<G: RollbackGame, T: Transport> P2PSession<G, T> {
@@ -88,6 +90,7 @@ impl<G: RollbackGame, T: Transport> P2PSession<G, T> {
             local_input: G::Input::default(),
             peer_ack: 0,
             rollback_frames: 0,
+            deepest_rollback: 0,
         }
     }
 
@@ -125,6 +128,12 @@ impl<G: RollbackGame, T: Transport> P2PSession<G, T> {
     /// Total frames re-simulated because a guess was wrong.
     pub fn rollback_frames(&self) -> u64 {
         self.rollback_frames
+    }
+
+    /// The most frames any single rollback has re-simulated. Must stay
+    /// within `max_prediction`; the network tests (R4) check it.
+    pub fn deepest_rollback(&self) -> Frame {
+        self.deepest_rollback
     }
 
     fn remote_player(&self) -> usize {
@@ -184,6 +193,7 @@ impl<G: RollbackGame, T: Transport> P2PSession<G, T> {
         self.queues[self.remote_player()].reset_prediction();
 
         let resume_at = self.current_frame;
+        self.deepest_rollback = self.deepest_rollback.max(resume_at - first_wrong);
         self.current_frame = first_wrong;
         while self.current_frame < resume_at {
             self.advance_frame(game);

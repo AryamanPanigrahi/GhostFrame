@@ -115,6 +115,12 @@ cargo test -p riposte-game sync -- --nocapture
 
 The game uses `rewind` as a *path dependency* (`rewind = { path = "../rewind" }` in `game/Cargo.toml`): Cargo builds it from the folder next door instead of downloading it, so there's nothing to install.
 
+Run the network convergence tests (R4): 200 random bad networks (latency, jitter, loss, reordering), and both peers must end identical. `--nocapture` prints how much rolling back and message loss happened:
+
+```bash
+cargo test -p rewind --test convergence -- --nocapture
+```
+
 Run rewind's toy game under the sync test (and the deliberately broken version, which should fail with a desync):
 
 ```bash

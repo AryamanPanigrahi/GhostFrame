@@ -197,4 +197,58 @@ mod tests {
         assert_eq!(RollbackGame::checksum(&a), b.checksum());
         assert!(a.fighters.iter().all(|f| f.health <= MAX_HEALTH));
     }
+
+    /// Riposte itself over a bad fake network (R4): latency, jitter,
+    /// reordering and lost messages, with each peer's bot playing from its
+    /// own (sometimes guessed) copy of the game. Once every input is in,
+    /// both copies must be identical.
+    #[test]
+    fn riposte_converges_over_a_bad_network() {
+        use rewind::{Config, FakeConfig, FakeNetwork, FakeTransport, P2PSession};
+
+        for seed in [1u64, 2, 3] {
+            let net_config = FakeConfig {
+                latency: 2,
+                jitter: 2,
+                loss_percent: 20,
+                max_loss_streak: 2,
+                in_order: seed % 2 == 0,
+                seed,
+            };
+            let (net, ta, tb) = FakeNetwork::new(net_config);
+            let mut peers: [P2PSession<GameState, FakeTransport>; 2] = [
+                P2PSession::new(0, ta, Config::default()),
+                P2PSession::new(1, tb, Config::default()),
+            ];
+            let mut games = [GameState::new(seed), GameState::new(seed)];
+            let mut bots = [Bot::new(seed ^ 0x1111), Bot::new(seed ^ 0x2222)];
+            let mut hits_seen = 0;
+
+            // 40 s of play, then 1 s of no input so every input arrives.
+            for t in 0..2400 + 60 {
+                for p in 0..2 {
+                    let input = if t < 2400 {
+                        bots[p].input(p, &games[p])
+                    } else {
+                        0
+                    };
+                    peers[p].add_local_input(input);
+                    peers[p].tick(&mut games[p]);
+                }
+                if games[0].fighters.iter().any(|f| f.health < MAX_HEALTH) {
+                    hits_seen += 1;
+                }
+                net.advance();
+            }
+
+            assert_eq!(games[0], games[1], "seed {seed}: peers ended up different");
+            assert!(
+                peers[0].rollback_frames() > 0,
+                "seed {seed}: never rolled back"
+            );
+            // Checked during the run, not at the end: a match can finish
+            // and reset to full health just before the run stops.
+            assert!(hits_seen > 0, "seed {seed}: nobody was ever hit");
+        }
+    }
 }

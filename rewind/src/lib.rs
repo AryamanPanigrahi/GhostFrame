@@ -20,4 +20,5 @@ pub use input_queue::{AddOutcome, InputQueue, InputStatus};
 pub use protocol::PeerMsg;
 pub use session::p2p::{Config, P2PSession};
 pub use session::synctest::{SyncTestError, SyncTestSession};
+pub use transport::fake::{FakeConfig, FakeNetwork, FakeTransport, LinkStats};
 pub use transport::memory::{memory_pair, MemoryTransport};

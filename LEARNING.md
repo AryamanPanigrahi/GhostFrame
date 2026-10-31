@@ -611,3 +611,43 @@ Rust allows this because `GameState` is our own type. The game crate depends on 
 **Why it matters:** DESIGN.md requires this before any online work. A sync-test failure on one machine in milliseconds is far easier to debug than a desync between two laptops minutes into a match.
 
 **Where:** `game/src/sim/rollback.rs` (tests: `Bot`, `Coverage`, `sync_test`). Run with `cargo test -p riposte-game sync -- --nocapture`.
+
+---
+
+## A deterministic fake network
+
+**What:** `FakeNetwork` joins two `Transport` ends with one link per direction. Each message gets:
+- an arrival time: `now + latency + random(0..=jitter)`;
+- a `loss_percent` chance of being dropped, but never more than `max_loss_streak` in a row.
+
+Time is a tick counter that only moves when the test calls `advance()`, once per game tick. Randomness is a seeded xorshift per direction, so **the same seed gives exactly the same delays and drops every run**.
+
+**TCP vs UDP:** with `in_order: true`, a message can't overtake an earlier one (it waits behind it), like TCP and so WebSockets. With `in_order: false`, jitter can reorder messages, like UDP. Riposte will run over WebSockets, which never lose or reorder messages, only delay them. Testing loss and reordering anyway proves the resend and acknowledgement logic works under worse conditions.
+
+**Why:** Real networks can't be repeated: a bug that shows up once in a thousand matches can't be reproduced. A fake network that's bad *on purpose and the same way every time* turns that into a test that fails the same way every run, naming the seed.
+
+**Where:** `rewind/src/transport/fake.rs` (`FakeConfig`, `FakeNetwork`, `FakeTransport`, `Link::send`, `Link::receive`).
+
+---
+
+## Convergence testing across many seeds
+
+**What:** `rewind/tests/convergence.rs` plays two `P2PSession`s against each other over 200 randomly chosen bad networks, each with random input scripts. After a quiet period at the end, so every input arrives, both games must be identical to each other *and* to a reference run where every input was known.
+
+Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messages dropped, and the deepest single rollback was 5 frames. Breaking resending on purpose (sending only the newest input) makes all four tests fail.
+
+`game/src/sim/rollback.rs` runs the same idea on Riposte itself (`riposte_converges_over_a_bad_network`).
+
+**Integration tests:** files in a crate's `tests/` folder are compiled as separate programs that can only use the crate's *public* API, exactly as the game does. That's why `P2PSession`, `Config` and the fake network are re-exported from `rewind/src/lib.rs`.
+
+**Where:** `rewind/tests/convergence.rs`, run with `cargo test -p rewind --test convergence -- --nocapture`.
+
+---
+
+## The prediction envelope (why R5's stall matters)
+
+**What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed. The fake network caps how late a message can be (`latency + jitter + max_loss_streak` ticks) so the tests stay inside that envelope. `lag_beyond_max_prediction_needs_the_r5_stall` shows what happens past it: with 20 ticks of latency, the session needs a snapshot that's already gone and panics with a clear message.
+
+**Why:** On a real connection, a lag spike can always go past any fixed limit. The fix (R5) is to *stall*: a session that is too far ahead of the last input it got from its peer skips advancing for a tick and waits, instead of guessing further. Until R5 lands, online play over a real network can crash on a big lag spike.
+
+**Where:** `SnapshotBuffer` capacity in `P2PSession::new`; `P2PSession::deepest_rollback`; the last test in `rewind/tests/convergence.rs`.

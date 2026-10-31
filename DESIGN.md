@@ -42,7 +42,8 @@ riposte/
 │   │   │   ├── synctest.rs
 │   │   │   └── p2p.rs
 │   │   ├── protocol.rs   # messages between peers
-│   │   └── transport/    # memory.rs (R3, tests), fake-latency (R4), websocket (R6)
+│   │   └── transport/    # memory.rs (R3, tests), fake.rs (R4), websocket (R6)
+│   ├── tests/convergence.rs # R4: two sessions over 200 random bad networks
 │   └── examples/boxes.rs # toy game used to test rewind without Riposte
 ├── game/                 # the fighting game (crate: riposte-game)
 │   └── src/
@@ -325,7 +326,7 @@ Ownership is by milestone and file, not by crate.
 
 **Aryaman**
 - ✅ **R3:** `P2PSession`: prediction, snapshot ring buffer, misprediction detection, rollback + resim. Tested with an in-memory transport pair. *R5 builds on it, so it must merge by Sat Oct 31 night.*
-- **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
+- ✅ **R4:** Fake-network transport (latency, jitter, packet loss) and convergence tests across many seeds.
 - ✅ **G1:** macroquad window, fixed 60 Hz tick loop (accumulator), keyboard → bitmask, trivial `LocalSession` (both inputs from one keyboard).
 - ✅ **G2:** Fixed-point movement: walk, jump, gravity, floor, walls, facing.
 - ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.

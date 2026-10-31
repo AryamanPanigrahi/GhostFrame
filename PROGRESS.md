@@ -19,13 +19,13 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
 | R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
 | R3: `P2PSession` | Aryaman | ✅ Done |
-| R4: fake-network transport + convergence tests | Aryaman | Not started |
+| R4: fake-network transport + convergence tests | Aryaman | ✅ Done |
 | R5: checksums, desync, stall | Ram | Not started (unblocked: R3 is done) |
 | R6: WebSocket transport | Ram | Not started |
 | S1, S2: relay server | Ram | ✅ Done |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
-**Tests:** 138 tests, all passing (`cargo test --workspace`): 39 in `rewind`, 82 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 150 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 83 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -260,6 +260,35 @@ cargo run -p riposte-server
 
 ---
 
+## R4: fake network and convergence tests (Aryaman)
+
+**Gist:**
+- `FakeNetwork` is a deterministic, tick-driven fake network. Each direction has latency, jitter, packet loss (capped by a maximum losing streak) and in-order (TCP-like) or reordering (UDP-like) delivery.
+- 200 seeded runs of two `P2PSession`s over random bad networks all converge: both peers end identical to each other and to a run where every input was known.
+- Riposte itself converges too, bot vs bot over a lossy, jittery network.
+
+**Files:**
+- `rewind/src/transport/fake.rs` (`FakeConfig`, `FakeNetwork`, `FakeTransport`, `LinkStats`).
+- `rewind/tests/convergence.rs`.
+- `riposte_converges_over_a_bad_network` in `game/src/sim/rollback.rs`.
+- `P2PSession::deepest_rollback()` added in `rewind/src/session/p2p.rs`.
+- Re-export lines in Ram's `rewind/src/lib.rs`.
+
+**Numbers (200-seed run):**
+- Networks: latency 0–3 ticks, jitter 0–2, loss 0–30% with at most 2 in a row, half in-order and half reordering.
+- About 30,000 frames re-simulated, over 20,000 messages dropped, deepest rollback 5 frames.
+
+**Decisions:**
+- Time and randomness are fully deterministic, so a failing seed fails the same way every run.
+- Messages due on the same tick come out in sending order.
+- The test networks stay inside the envelope the session can absorb without a stall. One test shows what happens past it: 20 ticks of latency panics with "further than max_prediction".
+
+**Tests:** 12 new: 7 for the fake network, 4 convergence tests, 1 Riposte-over-network test. Breaking resending on purpose makes all 4 convergence tests fail.
+
+**Learned:** the snapshot ring holds `max_prediction + 2` = 10 states, so with 2 frames of input delay up to about 10 ticks of lateness is survivable, slightly more than `max_prediction` suggests. 12 ticks of latency still converged; 20 did not.
+
+---
+
 ## G5: `RollbackGame` and the sync test (Aryaman)
 
 **Gist:**
@@ -345,6 +374,7 @@ cargo test -p riposte-game sync -- --nocapture
 - **Tuning:** all movement and frame-data numbers are first guesses. Ram's G6 includes frame-data tuning.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.
 - **Main loop floats:** `main.rs` converts macroquad's `f64` time to integers once. The "floats only in `render/`" rule is read as applying to the sim; say if it should be stricter.
+- **R5 is the last thing before real-network play:** R4 shows the session handles bad networks *within* its envelope, but a real lag spike can always go past it, and without a stall that panics. R4's fake network is ready for testing the stall too: `FakeConfig { latency: 20, .. }` is the case it must turn from a panic into a short pause.
 - **R5 (Ram) builds on R3:** `P2PSession::tick` returns an empty `Vec<Event>` for R5 to fill. `PeerMsg::Checksum` is defined but ignored on receipt, and there's no stall yet. A good place for the stall check is the start of `tick`, comparing `current_frame` with the remote queue's next frame against `Config::max_prediction`. R5 will probably also add `checksum_interval` to `Config`.
 - **`protocol.rs` ownership:** it isn't listed for either of us in CLAUDE.md. R3 created it exactly as DESIGN.md section 6 freezes it; R5 uses its `Checksum` variant.
 - **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.
