@@ -644,10 +644,34 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 
 ---
 
-## The prediction envelope (why R5's stall matters)
+## Stalling when too far ahead (R5)
 
-**What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed. The fake network caps how late a message can be (`latency + jitter + max_loss_streak` ticks) so the tests stay inside that envelope. `lag_beyond_max_prediction_needs_the_r5_stall` shows what happens past it: with 20 ticks of latency, the session needs a snapshot that's already gone and panics with a clear message.
+**What:** A session may run at most `max_prediction` frames ahead of the last frame it has the peer's real input for. At that point `tick` doesn't advance the game: it still sends (so the peer gets our inputs and acknowledgements), reports `Event::Stalled`, and tries again next tick. The check is `P2PSession::too_far_ahead`: `current_frame >= confirmed_end + max_prediction`, where `confirmed_end` is the first frame whose remote input is unknown.
 
-**Why:** On a real connection, a lag spike can always go past any fixed limit. The fix (R5) is to *stall*: a session that is too far ahead of the last input it got from its peer skips advancing for a tick and waits, instead of guessing further. Until R5 lands, online play over a real network can crash on a big lag spike.
+**Why:** A rollback can only go back as far as the snapshot ring reaches (`max_prediction + 2` frames). Without a limit, a lag spike makes the session guess further than that and the next correction has nothing to load. Stalling turns "crash or silent desync" into "a short pause". It also can't deadlock: a stalled side keeps sending, and the peer's acknowledgements and inputs are exactly what un-stall it.
+
+**Detail worth knowing:** the local input is only scheduled on ticks that really advance. If a stalled tick also queued an input, the next tick would try to queue a second one for the same frame. The cost is that an input given on a stalled tick is dropped, which is fine because the game keeps passing the player's current buttons.
+
+**Where:** `P2PSession::tick`, `too_far_ahead`, `confirmed_end` in `rewind/src/session/p2p.rs`; tests `stalls_instead_of_predicting_past_max_prediction` and (with 20 ticks of latency) `lag_beyond_max_prediction_stalls_instead_of_desyncing` in `rewind/tests/convergence.rs`.
+
+---
+
+## Checksum exchange and desync detection (R5)
+
+**What:** Every `checksum_interval` (30) frames, each side hashes its game with `RollbackGame::checksum` and sends `PeerMsg::Checksum { frame, hash }`. When both hashes for a frame are in hand and differ, the session emits `Event::Desync { frame }`.
+
+**Why only confirmed frames:** while a frame still rests on a guess about the peer's input, a late real input can roll it back and change the hash. Comparing then would flag a "desync" that is just normal rollback. So a checksum is sent, and compared, only once every input up to and including that frame is real (`frame < min(confirmed_end, current_frame)`). Each frame's hash is recorded as it is simulated, and re-simulation overwrites it, so the stored hash is always from the latest run of that frame.
+
+**What a Desync means:** both machines had identical inputs but different states, so the game is not deterministic (a float, a HashMap iteration, a clock read). It is always a bug, never a network problem. The sync test (R2) is the offline way to catch the same class of bug.
+
+**Limits:** checksums are sent once. A lost one just skips that check, and only the 16 newest unmatched checksums per side are kept so memory stays bounded.
+
+**Where:** `record_checksum`, `exchange_checksums` and the `PeerMsg::Checksum` arm of `receive` in `rewind/src/session/p2p.rs`; tests `a_diverging_simulation_is_reported_as_desync`, `agreeing_peers_report_no_desync_even_with_rollbacks`, `checksum_for_an_unconfirmed_frame_is_not_compared_early`.
+
+---
+
+## The prediction envelope
+
+**What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed without stalling. The random fake networks keep messages within that envelope; `lag_beyond_max_prediction_stalls_instead_of_desyncing` goes past it with 20 ticks of latency and shows the session stalls instead (see "Stalling when too far ahead").
 
 **Where:** `SnapshotBuffer` capacity in `P2PSession::new`; `P2PSession::deepest_rollback`; the last test in `rewind/tests/convergence.rs`.
