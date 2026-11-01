@@ -8,7 +8,12 @@
 /// Room codes are 4 letters (DESIGN.md section 8).
 pub const ROOM_CODE_LEN: usize = 4;
 
-pub const MAIN_ITEMS: [&str; 3] = ["Local 2-player", "Create online room", "Join online room"];
+pub const MAIN_ITEMS: [&str; 4] = [
+    "Local 2-player",
+    "Practice vs lag (bot)",
+    "Create online room",
+    "Join online room",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuKey {
@@ -38,6 +43,7 @@ pub enum Screen {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     StartLocal,
+    StartPractice,
     CreateRoom,
     JoinRoom { code: String },
 }
@@ -66,7 +72,8 @@ impl Menu {
                     MenuKey::Down => *selected = (*selected + 1) % count,
                     MenuKey::Confirm => match *selected {
                         0 => return Some(MenuAction::StartLocal),
-                        1 => return Some(MenuAction::CreateRoom),
+                        1 => return Some(MenuAction::StartPractice),
+                        2 => return Some(MenuAction::CreateRoom),
                         _ => {
                             self.screen = Screen::EnterCode {
                                 code: String::new(),
@@ -133,16 +140,23 @@ mod tests {
     fn selection_wraps_around() {
         let mut menu = Menu::default();
         menu.handle(MenuKey::Up);
-        assert_eq!(menu.screen, Screen::Main { selected: 2 });
+        assert_eq!(menu.screen, Screen::Main { selected: 3 });
         menu.handle(MenuKey::Down);
         assert_eq!(menu.screen, Screen::Main { selected: 0 });
     }
 
     #[test]
-    fn second_item_creates_a_room() {
+    fn second_item_starts_practice() {
         let mut menu = Menu::default();
         let action = press(&mut menu, &[MenuKey::Down, MenuKey::Confirm]);
-        assert_eq!(action, Some(MenuAction::CreateRoom));
+        assert_eq!(action, Some(MenuAction::StartPractice));
+    }
+
+    #[test]
+    fn third_item_creates_a_room() {
+        let mut menu = Menu::default();
+        let keys = [MenuKey::Down, MenuKey::Down, MenuKey::Confirm];
+        assert_eq!(press(&mut menu, &keys), Some(MenuAction::CreateRoom));
     }
 
     #[test]

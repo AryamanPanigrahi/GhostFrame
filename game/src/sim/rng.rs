@@ -27,9 +27,9 @@ impl Rng {
     /// Next pseudo-random number. Three shift-and-xor steps scramble the bits;
     /// 13, 7, 17 are the standard xorshift64 constants (Marsaglia, 2003),
     /// chosen so the sequence visits every non-zero u64 before repeating.
-    // Nothing in the sim needs randomness yet, but the generator has to be in
-    // the state from the start so checksums and rollback already cover it.
-    #[allow(dead_code)]
+    // Nothing in the sim itself uses randomness yet; it's in the state from
+    // the start so checksums and rollback already cover it. The bot
+    // (`bot.rs`) uses its own `Rng` to pick inputs.
     pub fn next_u64(&mut self) -> u64 {
         let mut x = self.state;
         x ^= x << 13;

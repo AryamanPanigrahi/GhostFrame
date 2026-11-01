@@ -81,7 +81,7 @@ This project exists so both authors can understand and explain every line in int
 ## Handoff notes (read before starting a session)
 Current as of Oct 31. Update this when it changes; detailed status lives in PROGRESS.md.
 
-- **Merged to `main`:** R1, R2, S1, S2 and G6 (Ram), plus workspace, G1-G4 and G7 (Aryaman).
+- **On `main`:** R1, R2, S1, S2 and G6 (Ram), plus workspace, G1-G5, G7, R3 and R4 (Aryaman), and I1 prep: `OnlineMatch` (`game/src/online.rs`) and the Practice vs lag mode (`game/src/practice.rs`).
 - **R3 is done** (`rewind/src/session/p2p.rs`), so Ram's R5 can start: fill the `Vec<Event>` that `tick` returns, handle `PeerMsg::Checksum`, and add the stall. Until R5 lands, `P2PSession` panics if it has to roll back further than `max_prediction`.
 - **G5 is done:** Riposte passes the sync test (`game/src/sim/rollback.rs`). For I1 the game still needs R5 (stall, desync) and R6 (WebSocket transport).
 - **R4 is done:** `rewind/src/transport/fake.rs` and `rewind/tests/convergence.rs`. Sessions converge over bad networks within their envelope; R5's stall is what handles lag beyond it (test it with `FakeConfig { latency: 20, .. }`).

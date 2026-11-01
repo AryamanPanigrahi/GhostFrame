@@ -185,6 +185,14 @@ impl FakeNetwork {
         (FakeNetwork { shared }, a, b)
     }
 
+    /// Change how bad the network is from now on (e.g. a lag setting in a
+    /// practice mode). Messages already on their way keep their arrival
+    /// times; in-order delivery still holds, because new messages never
+    /// arrive before ones already scheduled.
+    pub fn set_config(&self, config: FakeConfig) {
+        self.shared.borrow_mut().config = config;
+    }
+
     /// One tick of time passes.
     pub fn advance(&self) {
         self.shared.borrow_mut().now += 1;

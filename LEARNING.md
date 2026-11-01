@@ -651,3 +651,41 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 **Why:** On a real connection, a lag spike can always go past any fixed limit. The fix (R5) is to *stall*: a session that is too far ahead of the last input it got from its peer skips advancing for a tick and waits, instead of guessing further. Until R5 lands, online play over a real network can crash on a big lag spike.
 
 **Where:** `SnapshotBuffer` capacity in `P2PSession::new`; `P2PSession::deepest_rollback`; the last test in `rewind/tests/convergence.rs`.
+
+---
+
+## One tick driver for every kind of match
+
+**What:** `TickDriver` combines the fixed-timestep clock (G1) with the input buffering (G7): each frame it banks the elapsed time and ORs in the buttons seen, and returns how many ticks are due plus the inputs to use for them. Local, practice and online matches all use it.
+
+**Why:** These two rules are easy to get subtly wrong and were already being copied: "run exactly 60 ticks a second" and "never lose a tap that falls between ticks". One small type with its own tests keeps every mode behaving the same.
+
+**Where:** `game/src/driver.rs` (`TickDriver::frame`). Tests: `tap_on_a_frame_without_a_tick_is_kept`, `buffer_is_cleared_after_a_tick`.
+
+---
+
+## OnlineMatch: the game plus a rollback session over any transport
+
+**What:** `OnlineMatch<T: Transport>` holds this machine's `GameState`, a `P2PSession` and the render effects. Each tick it hands the session the local input and lets the session advance the game, rolling back if it must. It is *generic over the transport*: the same code runs over the fake network now and over the WebSocket transport (R6) later.
+
+**Why:** It's the integration point for I1. When R6 lands, joining a real match is: connect, wait for `MatchStart { player_index, seed }`, then `OnlineMatch::new(player_index, seed, websocket)`. Both machines must use the same seed and opposite player numbers, or their games differ from frame 0.
+
+**Where:** `game/src/online.rs`. Test: `two_online_matches_stay_identical_without_lag` (with no lag nothing is ever guessed, so both machines agree on every single tick).
+
+---
+
+## Practice vs lag (two peers in one program)
+
+**What:** A menu mode where you play the bot through the full netcode stack. Your `OnlineMatch` is player 0. The bot runs its *own* `P2PSession` and its *own* copy of the game as player 1. A `FakeNetwork` joins them, and its lag can be changed mid-match (keys 1-4, `FakeNetwork::set_config`). Each tick: you tick, the bot ticks, then one tick of network time passes.
+
+**Why:** It's the only way to *feel* rollback before two real machines can connect. With high lag, a hit from the bot can appear a few frames late and the bot can "teleport" slightly: that's a rollback correcting a wrong guess. The bot is a *player*, not part of the simulation: it only produces inputs, which travel over the network like a human's, so it has no determinism rules.
+
+**Where:** `game/src/practice.rs` (`Practice::update`, `LAG_PRESETS`), `game/src/bot.rs`. The presets stay within the prediction envelope; bigger lag needs R5's stall.
+
+---
+
+## Boxing a large enum variant
+
+**What:** `App::Practice(Box<Practice>)`. A Rust enum is as big as its largest variant. `Practice` holds two games and two snapshot rings, so storing it inline would make every `App` value, even the menu, that big. `Box` puts it on the heap, and the enum only stores a pointer.
+
+**Where:** `App` in `game/src/main.rs`.

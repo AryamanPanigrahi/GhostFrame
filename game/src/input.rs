@@ -42,6 +42,18 @@ fn held_or_tapped(key: KeyCode) -> bool {
     is_key_down(key) || is_key_pressed(key)
 }
 
+/// One player using either key set, for modes with a single human (practice
+/// and online), so it doesn't matter which side of the keyboard you use.
+pub fn read_either_player() -> Input {
+    read_input(&P1_KEYS) | read_input(&P2_KEYS)
+}
+
+/// Number keys 1-4 pick a lag preset in practice mode (0-3).
+pub fn lag_preset_pressed() -> Option<usize> {
+    let keys = [KeyCode::Key1, KeyCode::Key2, KeyCode::Key3, KeyCode::Key4];
+    keys.iter().position(|&key| is_key_pressed(key))
+}
+
 /// Split out from `read_input` so tests can pass a fake keyboard instead of
 /// macroquad's, which needs a real window.
 fn input_from_keys(keys: &KeyMap, is_down: fn(KeyCode) -> bool) -> Input {

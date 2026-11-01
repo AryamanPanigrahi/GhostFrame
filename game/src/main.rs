@@ -1,14 +1,22 @@
+mod bot;
 mod clock;
+mod driver;
 mod input;
 mod menu;
+mod online;
+mod practice;
 mod render;
 mod session;
 mod sim;
 
-use clock::FixedClock;
-use input::{back_pressed, read_input, read_menu_keys, P1_KEYS, P2_KEYS};
+use driver::TickDriver;
+use input::{
+    back_pressed, lag_preset_pressed, read_either_player, read_input, read_menu_keys, P1_KEYS,
+    P2_KEYS,
+};
 use macroquad::prelude::*;
 use menu::{Menu, MenuAction};
+use practice::Practice;
 use session::LocalSession;
 use sim::GameState;
 
@@ -41,9 +49,9 @@ fn now_micros() -> u64 {
 struct LocalMatch {
     game: GameState,
     session: LocalSession,
-    clock: FixedClock,
-    /// Buttons seen on any frame since the last tick, per player.
-    buffered: [sim::Input; 2],
+    /// A fresh driver per match, so time spent in the menu isn't banked as
+    /// ticks.
+    driver: TickDriver,
     /// Hit flash and screen shake (G6). Kept per match so a new match never
     /// starts with a leftover shake.
     effects: render::effects::Effects,
@@ -54,32 +62,21 @@ impl LocalMatch {
         LocalMatch {
             game: GameState::new(LOCAL_SEED),
             session: LocalSession::default(),
-            // A fresh clock, so time spent in the menu isn't banked as ticks.
-            clock: FixedClock::default(),
-            buffered: [0, 0],
+            driver: TickDriver::default(),
             effects: render::effects::Effects::default(),
         }
     }
 
-    /// One render frame: work out how many 1/60 s ticks are due and run
-    /// them. The sim never sees how long the frame took.
-    ///
-    /// Input is collected across frames: on a 144 Hz screen most frames run
-    /// no tick at all, and a tap seen on one of those frames would otherwise
-    /// never reach the sim.
+    /// One render frame: run the 1/60 s ticks that are due. The sim never
+    /// sees how long the frame took.
     fn update(&mut self, elapsed_micros: u64) {
-        self.buffered[0] |= read_input(&P1_KEYS);
-        self.buffered[1] |= read_input(&P2_KEYS);
-        let ticks = self.clock.advance(elapsed_micros);
-        if ticks == 0 {
-            return;
-        }
+        let keys = [read_input(&P1_KEYS), read_input(&P2_KEYS)];
+        let (ticks, inputs) = self.driver.frame(elapsed_micros, keys);
         for _ in 0..ticks {
-            self.session.add_local_input(0, self.buffered[0]);
-            self.session.add_local_input(1, self.buffered[1]);
+            self.session.add_local_input(0, inputs[0]);
+            self.session.add_local_input(1, inputs[1]);
             self.session.tick(&mut self.game);
         }
-        self.buffered = [0, 0];
     }
 }
 
@@ -87,6 +84,9 @@ impl LocalMatch {
 enum App {
     Menu(Menu),
     Local(LocalMatch),
+    /// Boxed because it holds two games and two snapshot rings, much bigger
+    /// than the other variants.
+    Practice(Box<Practice>),
 }
 
 // macroquad's main is async: `next_frame().await` hands control back to the
@@ -111,6 +111,9 @@ async fn main() {
                         Some(MenuAction::StartLocal) => {
                             switch_to = Some(App::Local(LocalMatch::new()));
                         }
+                        Some(MenuAction::StartPractice) => {
+                            switch_to = Some(App::Practice(Box::new(Practice::new())));
+                        }
                         Some(MenuAction::CreateRoom) => {
                             menu.show_notice(ONLINE_NOT_READY.to_owned());
                         }
@@ -128,6 +131,17 @@ async fn main() {
                 }
                 local.update(elapsed);
                 render::draw(&local.game, &mut local.effects);
+            }
+            App::Practice(practice) => {
+                if back_pressed() {
+                    switch_to = Some(App::Menu(Menu::default()));
+                }
+                if let Some(preset) = lag_preset_pressed() {
+                    practice.set_preset(preset);
+                }
+                practice.update(elapsed, read_either_player());
+                render::draw(&practice.you.game, &mut practice.you.effects);
+                render::draw_overlay(&practice.overlay());
             }
         }
         if let Some(next) = switch_to {

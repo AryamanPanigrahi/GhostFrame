@@ -23,9 +23,9 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R5: checksums, desync, stall | Ram | Not started (unblocked: R3 is done) |
 | R6: WebSocket transport | Ram | Not started |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | Not started |
+| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag); real connection needs R5 + R6 |
 
-**Tests:** 150 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 83 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 159 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 92 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -257,6 +257,33 @@ cargo run -p rewind --example boxes
 ```bash
 cargo run -p riposte-server
 ```
+
+---
+
+## I1 prep: online match plumbing and "Practice vs lag" (Aryaman)
+
+**Gist:**
+- `OnlineMatch` is the game plus a `P2PSession` over any transport. When R6 lands, I1 is: connect, wait for `MatchStart`, then create an `OnlineMatch` with that player number and seed over the WebSocket.
+- A new menu mode, **Practice vs lag**, plays you against the bot through the real netcode. The bot runs its own session and game copy, joined to yours by R4's fake network, and keys 1-4 change the lag mid-match. An overlay shows frames rolled back.
+- `TickDriver` now drives every match: the fixed 60 Hz clock plus input buffering, previously copied inside `LocalMatch`.
+
+**Files:**
+- `game/src/online.rs` (`OnlineMatch`), `game/src/practice.rs` (`Practice`, `LAG_PRESETS`), `game/src/driver.rs` (`TickDriver`).
+- `game/src/bot.rs` (`Bot`, moved out of the G5 tests).
+- Menu item and `MenuAction::StartPractice` in `menu.rs`; `read_either_player` and `lag_preset_pressed` in `input.rs`.
+- Placeholder `draw_overlay` in `render/mod.rs`; `App::Practice` in `main.rs`.
+- `FakeNetwork::set_config` in `rewind/src/transport/fake.rs`.
+
+**Lag presets (one-way):** none; 33 ms + 17 ms jitter; 67 ms + jitter, 5% loss; 100 ms + jitter, 10% loss. All in-order, like a WebSocket, and all inside the prediction envelope.
+
+**Verified in a browser:** headless Chromium ran practice mode on the worst preset. Both fighters landed hits, it rolled back 227 frames (deepest 6), and nothing broke.
+
+**Tests:** 9 new:
+- tick driver (2), bot (2), menu practice item (1);
+- two online matches identical every tick without lag (1);
+- practice: worst preset rolls back without crashing, no lag means both sides agree every tick, switching lag mid-match is safe (3).
+
+**What I1 still needs:** R6's WebSocket transport, a small client for the relay's `ClientMsg`/`ServerMsg` (create or join a room, wait for `MatchStart`), wiring the menu's Create/Join to it, and R5's stall and desync events.
 
 ---
 
