@@ -3,13 +3,12 @@
 //! messy the network, once every input has arrived both games must be
 //! identical, and identical to a run where every input was known up front.
 //!
-//! Limit: there's no stall yet (R5), so the network here stays within what
-//! the session can absorb on its own: a message is never late by more than
-//! `latency + jitter + max_loss_streak` ticks, kept small enough that no
-//! rollback goes past `max_prediction`. The last test shows what happens
-//! beyond that.
+//! The random networks stay within what the session can absorb without
+//! stalling: a message is never late by more than
+//! `latency + jitter + max_loss_streak` ticks. The last test shows what
+//! happens beyond that: the session stalls (R5) rather than desyncing.
 
-use rewind::{Config, FakeConfig, FakeNetwork, FakeTransport, P2PSession, RollbackGame};
+use rewind::{Config, Event, FakeConfig, FakeNetwork, FakeTransport, P2PSession, RollbackGame};
 
 /// A tiny game whose state depends on every input and on which player sent
 /// it, so any wrong, missing or swapped input changes the result.
@@ -203,19 +202,41 @@ fn input_delay_absorbs_small_latency() {
 }
 
 #[test]
-#[should_panic(expected = "further than max_prediction")]
-fn lag_beyond_max_prediction_needs_the_r5_stall() {
-    // 20 ticks of latency minus 2 frames of input delay: each side runs
-    // ~18 frames ahead on guesses. The snapshot ring only reaches back
-    // max_prediction + 2 = 10 frames, so the first wrong guess needs a
-    // snapshot that's already overwritten. R5's stall stops a session
-    // getting this far ahead; until then, the session refuses loudly
-    // instead of silently desyncing.
+fn lag_beyond_max_prediction_stalls_instead_of_desyncing() {
+    // 20 ticks of latency minus 2 frames of input delay would put each side
+    // ~18 frames ahead on guesses, past what the snapshot ring holds. With
+    // R5's stall each side stops at max_prediction frames ahead instead.
+    // Inputs given on stalled ticks are dropped, so there is no reference
+    // run to compare against; the checksums show the two sides never
+    // disagreed.
     let net = FakeConfig {
         latency: 20,
         ..FakeConfig::default()
     };
+    let session = Config {
+        checksum_interval: 10,
+        ..Config::default()
+    };
+    let (network, ta, tb) = FakeNetwork::new(net);
+    let mut a: P2PSession<Tally, FakeTransport> = P2PSession::new(0, ta, session);
+    let mut b: P2PSession<Tally, FakeTransport> = P2PSession::new(1, tb, session);
+    let (mut ga, mut gb) = (Tally::default(), Tally::default());
     let mut rng = Rng(9);
-    let (p0, p1) = (script(&mut rng, 300), script(&mut rng, 300));
-    play(net, Config::default(), &p0, &p1);
+    let (p0, p1) = (script(&mut rng, 600), script(&mut rng, 600));
+
+    let mut events = Vec::new();
+    for t in 0..600 {
+        a.add_local_input(p0[t]);
+        b.add_local_input(p1[t]);
+        events.extend(a.tick(&mut ga));
+        events.extend(b.tick(&mut gb));
+        network.advance();
+    }
+    assert!(events.contains(&Event::Stalled));
+    assert!(a.stalled_ticks() > 0 && b.stalled_ticks() > 0);
+    assert!(!events.iter().any(|e| matches!(e, Event::Desync { .. })));
+    assert!(a.deepest_rollback() <= session.max_prediction);
+    assert!(b.deepest_rollback() <= session.max_prediction);
+    // It still makes progress: stalling is waiting, not deadlock.
+    assert!(a.current_frame() > 200 && b.current_frame() > 200);
 }
