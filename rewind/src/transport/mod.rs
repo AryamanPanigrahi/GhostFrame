@@ -3,3 +3,4 @@
 
 pub mod fake;
 pub mod memory;
+pub mod websocket;

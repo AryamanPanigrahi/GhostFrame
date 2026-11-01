@@ -675,3 +675,21 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 **What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed without stalling. The random fake networks keep messages within that envelope; `lag_beyond_max_prediction_stalls_instead_of_desyncing` goes past it with 20 ticks of latency and shows the session stalls instead (see "Stalling when too far ahead").
 
 **Where:** `SnapshotBuffer` capacity in `P2PSession::new`; `P2PSession::deepest_rollback`; the last test in `rewind/tests/convergence.rs`.
+
+---
+
+## The WebSocket transport and the relay (R6)
+
+**What:** `WebSocketTransport` (`rewind/src/transport/websocket.rs`) is a `Transport` that sends bytes to the relay server over one WebSocket. `send(bytes)` becomes `ClientMsg::Relay(bytes)`; relayed bytes from the other player arrive as `ServerMsg::Relay(bytes)` and come out of `poll`. The session never knows: it saw the same `send`/`poll` with the in-memory and fake transports.
+
+**Lobby on the same connection:** the room handshake (`create_room`, `join_room`, then `RoomCreated` / `MatchStart` / `PeerLeft`) travels on the same socket, so the transport has a small second API, `lobby_events()`, for the menu. `pump` reads the socket once and sorts each message into the game stream or the lobby list, so neither side loses the other's messages.
+
+**Non-blocking I/O:** a game loop must never wait for the network. `poll` calls `try_recv`, which returns at once with a message or nothing. On desktop that means putting the socket in non-blocking mode after the handshake; a read with nothing there fails with `WouldBlock`, which means "nothing yet", not an error. In the browser the socket is JavaScript's and queues messages for us.
+
+**Held-back sends:** a browser WebSocket is "connecting" for a moment after `connect`, and sending then throws. The transport keeps outgoing messages in `unsent` and flushes them once `is_open()`.
+
+**A trait for the socket:** `ByteSocket` (send, try_recv, is_open) is the only thing `WebSocketTransport` needs from a socket. Desktop and browser each provide one, and the unit tests provide a fake one, so the logic is tested with no network at all.
+
+**Same enums, two crates:** `ClientMsg` / `ServerMsg` are defined in both `server/src/protocol.rs` and `websocket.rs`. bincode encodes an enum variant by its position, so they must stay in the same order. The test `server/tests/rewind_client.rs` runs the real transport against the real server, so any mismatch fails there.
+
+**Where:** `rewind/src/transport/websocket.rs`; end-to-end in `server/tests/rewind_client.rs`.

@@ -298,7 +298,8 @@ Reading before writing keeps the result independent of which player is updated f
 | Crate | Used in | Why |
 |---|---|---|
 | macroquad | game | Window, input, 2D drawing; compiles to WASM easily |
-| quad-net | rewind (ws transport) | WebSocket client that works on native **and** WASM |
+| quad-net | rewind (ws transport, browser only) | WebSocket client for WASM. Its desktop half aborts on current Rust on Windows (R6), so desktop uses tungstenite |
+| tungstenite | rewind (ws transport, desktop only) | Blocking WebSocket client, switched to non-blocking after the handshake; already in the tree via tokio-tungstenite |
 | serde, bincode | rewind, server | Message serialization |
 | tokio, axum | server | Async runtime + WebSocket server |
 | thiserror / anyhow | libs / binaries | Error handling |

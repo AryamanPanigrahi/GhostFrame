@@ -21,7 +21,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R3: `P2PSession` | Aryaman | ✅ Done |
 | R4: fake-network transport + convergence tests | Aryaman | ✅ Done |
 | R5: checksums, desync, stall | Ram | ✅ Done |
-| R6: WebSocket transport | Ram | Not started |
+| R6: WebSocket transport | Ram | ✅ Done (browser end-to-end waits for I2) |
 | S1, S2: relay server | Ram | ✅ Done |
 | I1–I3: online play, browser, deploy | Together | Not started |
 
