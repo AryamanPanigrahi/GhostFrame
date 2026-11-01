@@ -40,8 +40,8 @@ impl RollbackGame for GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bot::Bot;
     use crate::sim::fighter::{Action, MAX_HEALTH};
-    use crate::sim::rng::Rng;
     use crate::sim::round::Phase;
     use crate::sim::{DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
     use rewind::SyncTestSession;
@@ -49,53 +49,6 @@ mod tests {
     /// How far back every tick rolls. At least the online session's
     /// max_prediction (8), the furthest a real rollback can go.
     const CHECK_DISTANCE: usize = 8;
-
-    /// A crude bot: every few frames it picks something to do, biased
-    /// toward walking in and attacking so that hits, KOs and whole matches
-    /// happen within a few thousand frames.
-    struct Bot {
-        rng: Rng,
-        held: Input,
-        frames_left: u32,
-    }
-
-    impl Bot {
-        fn new(seed: u64) -> Bot {
-            Bot {
-                rng: Rng::new(seed),
-                held: 0,
-                frames_left: 0,
-            }
-        }
-
-        fn input(&mut self, me: usize, game: &GameState) -> Input {
-            if self.frames_left == 0 {
-                let other = 1 - me;
-                let forward = if game.fighters[other].x > game.fighters[me].x {
-                    RIGHT
-                } else {
-                    LEFT
-                };
-                let back = if forward == RIGHT { LEFT } else { RIGHT };
-                // A fresh choice each segment, so attack buttons are released
-                // and pressed again (attacks start on a press, not a hold).
-                self.held = match self.rng.next_u64() % 20 {
-                    0..=6 => forward,
-                    7..=10 => LIGHT,
-                    11..=13 => HEAVY,
-                    14 => forward | LIGHT,
-                    15 => UP | forward,
-                    16 => DOWN,
-                    17 => DOWN | HEAVY,
-                    18 => back,
-                    _ => 0,
-                };
-                self.frames_left = 3 + (self.rng.next_u64() % 10) as u32;
-            }
-            self.frames_left -= 1;
-            self.held
-        }
-    }
 
     /// What a run went through, to prove the sync test reached the
     /// interesting code and didn't just watch two idle fighters.

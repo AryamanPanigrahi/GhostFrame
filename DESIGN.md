@@ -48,7 +48,11 @@ riposte/
 ├── game/                 # the fighting game (crate: riposte-game)
 │   └── src/
 │       ├── main.rs       # window, menus, main loop
-│       ├── menu.rs       # main menu: local / create room / join with code
+│       ├── menu.rs       # main menu: local / practice / create room / join with code
+│       ├── driver.rs     # TickDriver: frames → ticks, input kept between ticks
+│       ├── online.rs     # OnlineMatch: GameState + P2PSession over any Transport
+│       ├── practice.rs   # Practice vs lag: you vs bot over the fake network
+│       ├── bot.rs        # simple computer opponent (inputs only)
 │       ├── clock.rs      # real time → fixed 1/60 s ticks
 │       ├── session.rs    # LocalSession (both players on one keyboard)
 │       ├── sim/          # deterministic simulation (NO floats)
@@ -345,7 +349,7 @@ Ownership is by milestone and file, not by crate.
 - ◐ **G6:** *(partly done: flash and shake; see PROGRESS.md)* Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
-- **I1:** Online native vs native through the relay, tested on two laptops.
+- **I1:** Online native vs native through the relay, tested on two laptops. *Prep done: `OnlineMatch` and practice vs lag; waiting on R5 and R6.*
 - **I2:** Online in the browser.
 - **I3:** Deploy server + client, public link in README.
 

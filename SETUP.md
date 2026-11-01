@@ -133,6 +133,8 @@ cargo run -p rewind --example boxes -- --broken
 
 The first build downloads and compiles macroquad and takes a minute; later builds are incremental.
 
+**Practice vs lag** (main menu, second item): you against the bot through real rollback netcode over the fake network. You can use either key set. Number keys **1-4** switch the lag mid-match: none, 33 ms, 67 ms, then 100 ms one-way with jitter and some lost messages. The overlay shows how many frames have been rolled back. Esc returns to the menu.
+
 Controls for local 2-player:
 
 | | Move | Jump | Crouch | Light | Heavy |

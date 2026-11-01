@@ -186,6 +186,14 @@ fn flash_tint(base: Color, amount: f32) -> Color {
     )
 }
 
+/// Plain debug text in the middle of the screen, e.g. practice-mode stats.
+pub fn draw_overlay(lines: &[String]) {
+    let view = View::for_window((0.0, 0.0));
+    for (i, line) in lines.iter().enumerate() {
+        view.text(line, 300.0, 170.0 + i as f32 * 28.0, 22.0, WHITE);
+    }
+}
+
 /// Placeholder menu: plain text, the selected item marked with ">".
 pub fn draw_menu(menu: &Menu) {
     clear_background(BLACK);
