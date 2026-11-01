@@ -20,3 +20,7 @@ anyhow = "1"
 # server over a real socket. Both are already in the tree via axum.
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
+# Only for tests/rewind_client.rs: drives the server with rewind's real
+# WebSocketTransport, which also proves rewind's copy of the protocol enums
+# matches ours.
+rewind = { path = "../rewind" }
