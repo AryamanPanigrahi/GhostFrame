@@ -337,7 +337,7 @@ Ownership is by milestone and file, not by crate.
 - ✅ **G3:** Attacks: action state machine, frame data, hitboxes/hurtboxes, damage, hitstun, knockback.
 - ✅ **G4:** Rounds, health bars, KO, reset, PRNG + FNV checksum.
 - ✅ **G5:** Implement `RollbackGame`. **Must pass `SyncTestSession`.** *Passes: 4 seeds × 6000 frames, 8-frame rollback every tick.*
-- ✅ **G7:** Main menu (create room / join with code), WASM build. *Online items show a notice until I1 connects them.*
+- ✅ **G7:** Main menu (create room / join with code), WASM build. *Create/Join are connected by I1.*
 
 **Ram**
 - ✅ **R1:** Crate skeleton, `api.rs` traits, `InputQueue` with unit tests.
@@ -349,7 +349,7 @@ Ownership is by milestone and file, not by crate.
 - ◐ **G6:** *(partly done: flash and shake; see PROGRESS.md)* Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
-- **I1:** Online native vs native through the relay, tested on two laptops. *Prep done: `OnlineMatch` and practice vs lag; waiting on R5 and R6.*
+- ✅ **I1:** Online native vs native through the relay (`game/src/netplay.rs`: lobby + `RemoteMatch`). *Code done; the two-laptop test is still to do.*
 - **I2:** Online in the browser.
 - **I3:** Deploy server + client, public link in README.
 

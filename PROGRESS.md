@@ -15,7 +15,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G4: rounds, health bars, KO, reset, PRNG + FNV checksum | Aryaman | ✅ Done |
 | G5: `RollbackGame` + `SyncTestSession` | Aryaman | ✅ Done: passes the sync test |
 | G6: game feel (render-only) | Ram | Partly done: flash + shake (no hitstop visuals, health-bar animation or frame-data tuning yet, see below) |
-| G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
+| G7: menu, WASM build | Aryaman | ✅ Done |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
 | R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
 | R3: `P2PSession` | Aryaman | ✅ Done |
@@ -23,7 +23,8 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R5: checksums, desync, stall | Ram | ✅ Done |
 | R6: WebSocket transport | Ram | ✅ Done (browser end-to-end waits for I2) |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag); real connection needs R5 + R6 |
+| I1: native online play | Together | ✅ Code done (menu → relay → `OnlineMatch`); two-machine test pending |
+| I2–I3: browser, deploy | Together | Not started |
 
 **Tests:** 159 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 92 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
@@ -405,3 +406,10 @@ cargo test -p riposte-game sync -- --nocapture
 - **R5 (Ram) builds on R3:** `P2PSession::tick` returns an empty `Vec<Event>` for R5 to fill. `PeerMsg::Checksum` is defined but ignored on receipt, and there's no stall yet. A good place for the stall check is the start of `tick`, comparing `current_frame` with the remote queue's next frame against `Config::max_prediction`. R5 will probably also add `checksum_interval` to `Config`.
 - **`protocol.rs` ownership:** it isn't listed for either of us in CLAUDE.md. R3 created it exactly as DESIGN.md section 6 freezes it; R5 uses its `Checksum` variant.
 - **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.
+
+## I1: menu to relay to online match
+- Create/Join in the menu now open a WebSocket to the relay (`ws://127.0.0.1:8080/ws`, or `RIPOSTE_RELAY`), wait in a lobby for `MatchStart`, then hand the same connection to an `OnlineMatch` as player `player_index` with the relay's `seed`.
+- Files: `game/src/netplay.rs` (new: `Lobby`, `RemoteMatch`), `game/src/main.rs` (new `App::Lobby` and `App::Online` screens; Aryaman's file, edited with Ram's OK).
+- Esc leaves the lobby or the match. The on-screen overlay shows rollback stats, "Waiting for opponent..." on a stall and "DESYNC at frame N" (also printed to the terminal).
+- Tests: lobby event handling is unit-tested without a socket; the transport and relay are covered by R6's `server/tests/rewind_client.rs`. The two-machine test is manual (SETUP.md section 11).
+- Open: a join for a room that doesn't exist makes the relay drop the connection, but the transport doesn't report a closed socket, so the lobby just waits (Esc cancels). Desktop `wss://` is still I3. Native connect blocks the window until it connects or fails.

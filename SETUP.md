@@ -273,3 +273,11 @@ This starts a real relay on a free port and plays two `P2PSession`s through it w
 ```bash
 cargo build -p rewind --target wasm32-unknown-unknown
 ```
+
+## 11. Play online on two machines (I1)
+
+1. On one machine start the relay: `cargo run -p riposte-server` (listens on port 8080).
+2. On each machine run the game: `cargo run -p riposte-game`. If the relay is on another machine, point the game at it first. In PowerShell: `$env:RIPOSTE_RELAY = "ws://<relay-ip>:8080/ws"`.
+3. One player picks "Create online room" and reads out the 4-letter code; the other picks "Join online room" and types it. The match starts when both are in. Esc leaves.
+
+To try it on one machine, run the game twice in two terminals against `ws://127.0.0.1:8080/ws`.

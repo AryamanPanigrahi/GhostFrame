@@ -731,3 +731,6 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 **Same enums, two crates:** `ClientMsg` / `ServerMsg` are defined in both `server/src/protocol.rs` and `websocket.rs`. bincode encodes an enum variant by its position, so they must stay in the same order. The test `server/tests/rewind_client.rs` runs the real transport against the real server, so any mismatch fails there.
 
 **Where:** `rewind/src/transport/websocket.rs`; end-to-end in `server/tests/rewind_client.rs`.
+
+## The lobby hands its connection to the match (I1)
+A room belongs to one WebSocket connection on the relay. So the menu can't open a connection to ask for a room and then open another for the match: the relay would see a stranger. `Lobby` (`game/src/netplay.rs`) owns the `WebSocketTransport` while waiting for `MatchStart`, then `take_transport` moves it into `RemoteMatch`, whose `OnlineMatch` uses it as its `Transport`. The lobby keeps its event logic in a small `LobbyState` so tests can feed it events with no socket.

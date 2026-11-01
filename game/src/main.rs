@@ -3,6 +3,7 @@ mod clock;
 mod driver;
 mod input;
 mod menu;
+mod netplay;
 mod online;
 mod practice;
 mod render;
@@ -16,6 +17,7 @@ use input::{
 };
 use macroquad::prelude::*;
 use menu::{Menu, MenuAction};
+use netplay::{Intent, Lobby, LobbyOutcome, RemoteMatch};
 use practice::Practice;
 use session::LocalSession;
 use sim::GameState;
@@ -33,11 +35,6 @@ fn window_conf() -> Conf {
 /// Local play has no server to hand out a seed, so any fixed value works.
 /// Online, the seed comes from the server's `MatchStart` message.
 const LOCAL_SEED: u64 = 1;
-
-/// Shown for the online menu items until the relay server (S1), the
-/// WebSocket transport (R6) and the online session are joined up in I1.
-/// `\n` starts a new line on screen.
-const ONLINE_NOT_READY: &str = "Online play isn't connected yet.\nIt needs the relay server and WebSocket transport (milestone I1).";
 
 /// Microseconds since the game started. macroquad gives seconds as f64; we
 /// convert once here so the clock works in whole numbers.
@@ -87,6 +84,22 @@ enum App {
     /// Boxed because it holds two games and two snapshot rings, much bigger
     /// than the other variants.
     Practice(Box<Practice>),
+    /// In a relay room, waiting for the match to start.
+    Lobby(Box<Lobby>),
+    /// An online match; boxed for the same reason as `Practice`.
+    Online(Box<RemoteMatch>),
+}
+
+/// Connect to the relay, or go back to the menu with the reason it failed.
+fn enter_lobby(menu: &mut Menu, intent: Intent) -> Option<App> {
+    let url = netplay::relay_url();
+    match Lobby::connect(&url, intent) {
+        Ok(lobby) => Some(App::Lobby(Box::new(lobby))),
+        Err(e) => {
+            menu.show_notice(format!("{e}\nIs the relay running? ({url})"));
+            None
+        }
+    }
 }
 
 // macroquad's main is async: `next_frame().await` hands control back to the
@@ -115,10 +128,10 @@ async fn main() {
                             switch_to = Some(App::Practice(Box::new(Practice::new())));
                         }
                         Some(MenuAction::CreateRoom) => {
-                            menu.show_notice(ONLINE_NOT_READY.to_owned());
+                            switch_to = enter_lobby(menu, Intent::Create);
                         }
                         Some(MenuAction::JoinRoom { code }) => {
-                            menu.show_notice(format!("Room {code}\n{ONLINE_NOT_READY}"));
+                            switch_to = enter_lobby(menu, Intent::Join { code });
                         }
                         None => {}
                     }
@@ -142,6 +155,43 @@ async fn main() {
                 practice.update(elapsed, read_either_player());
                 render::draw(&practice.you.game, &mut practice.you.effects);
                 render::draw_overlay(&practice.overlay());
+            }
+            App::Lobby(lobby) => {
+                if back_pressed() {
+                    switch_to = Some(App::Menu(Menu::default()));
+                } else {
+                    match lobby.update() {
+                        LobbyOutcome::Waiting => {}
+                        LobbyOutcome::Start { player_index, seed } => {
+                            // The match keeps using the lobby's connection.
+                            let transport = lobby.take_transport();
+                            let remote = RemoteMatch::new(player_index, seed, transport);
+                            switch_to = Some(App::Online(Box::new(remote)));
+                        }
+                        LobbyOutcome::Failed(message) => {
+                            let mut menu = Menu::default();
+                            menu.show_notice(message);
+                            switch_to = Some(App::Menu(menu));
+                        }
+                    }
+                }
+                clear_background(BLACK);
+                let mut lines = lobby.lines();
+                lines.push("Esc: cancel".to_owned());
+                render::draw_overlay(&lines);
+            }
+            App::Online(remote) => {
+                if back_pressed() || remote.is_disconnected() {
+                    let mut menu = Menu::default();
+                    if remote.is_disconnected() {
+                        menu.show_notice("Your opponent disconnected.".to_owned());
+                    }
+                    switch_to = Some(App::Menu(menu));
+                } else {
+                    remote.update(elapsed, read_either_player());
+                    render::draw(&remote.online.game, &mut remote.online.effects);
+                    render::draw_overlay(&remote.overlay());
+                }
             }
         }
         if let Some(next) = switch_to {
