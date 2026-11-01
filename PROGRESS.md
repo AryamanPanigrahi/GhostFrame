@@ -23,9 +23,11 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R5: checksums, desync, stall | Ram | ✅ Done |
 | R6: WebSocket transport | Ram | ✅ Done (browser end-to-end waits for I2) |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | I1 ◐ code done: Create/Join → lobby → online match. Verified browser vs browser through the real relay; the two-laptop test is yours |
+| I1 online play | Together | ◐ Code done, browser vs browser verified; the two-laptop test is yours |
+| I2 online in the browser | Aryaman | ✅ Done in the sandbox: the page picks its own relay address; two browsers played via the relay serving the page |
+| I3 deploy + public link | Together | ◐ Prep done (relay serves the web build; Dockerfile includes it). Untested Dockerfile, no host chosen, no README yet |
 
-**Tests:** 181 tests, all passing (`cargo test --workspace`): 63 in `rewind` (including R5's stall/desync tests and 4 network convergence tests), 98 in `riposte-game`, 20 in `riposte-server` (including R6's end-to-end tests: two `WebSocketTransport`s and two rollback sessions through a real server over real sockets). fmt and clippy clean.
+**Tests:** 185 tests, all passing (`cargo test --workspace`): 63 in `rewind`, 98 in `riposte-game`, 24 in `riposte-server` (including 4 for serving the web build). fmt and clippy clean.
 
 ---
 
@@ -260,6 +262,28 @@ cargo run -p riposte-server
 
 ---
 
+## I2 + I3 prep: browser picks its relay, relay hosts the page (Aryaman)
+
+**Gist:**
+- **I2:** the page decides the relay address (`relayUrl` in `web/index.html`): `?server=` override, else `ws://<host>:8080/ws` for a page on another dev port, else the page's own address (`wss://` on HTTPS). The game gets it through two functions the page adds to the module (`server_url()` for wasm in `netplay.rs`).
+- **I3 prep:** with `WEB_DIR` set, the relay also serves `index.html`, `mq_js_bundle.js` and `riposte-game.wasm`, so one deployed app is the whole game. The `Dockerfile` builds the web version into the image and sets `WEB_DIR`.
+
+**Verified in the sandbox:**
+- Relay with `WEB_DIR=web` on :8080; two headless browsers opened it with **no configuration**, created and joined a room, and fought (760 / 900 hp, 89 frames rolled back, 48 stalled ticks, no desync).
+- The four address cases (HTTPS page, relay page, dev port, `?server=`) all return the right URL.
+- 4 server tests: the right content types, only the 3 fixed files (path traversal gets 404), a missing file is a 404, and without `WEB_DIR` `/` is still the health check.
+
+**Not verified:** the `Dockerfile` (no Docker daemon in the sandbox), and anything over a real HTTPS host.
+
+**Files:** `server/src/web.rs` (new), `app_with_web` in `server/src/lib.rs`, `WEB_DIR` handling in `server/src/main.rs`, `tokio`'s `fs` feature in `server/Cargo.toml`, `server/tests/web.rs`, `web/index.html`, `game/src/netplay.rs`, `Dockerfile`, `.dockerignore`. The server files are Ram's; the change is small and additive, and `app()` behaves exactly as before.
+
+**Still open for I3:**
+- **Desktop `wss://`:** `rewind` links tungstenite without TLS, so desktop can only reach `ws://` servers. Adding it means a TLS feature on tungstenite in `rewind/Cargo.toml` (Ram's R6 file) plus a justified new dependency. Browser players don't need it.
+- Choose a host, deploy, and put the public link in a README.
+- Free hosts usually sleep idle apps, so the first connection can be slow, and rooms don't survive a restart.
+
+---
+
 ## I1: online play through the relay (Aryaman)
 
 **Gist:**
@@ -300,7 +324,7 @@ cargo run -p riposte-server
 **Still open for I1/I2:**
 - The two-laptop test.
 - Errors don't say *why* a native connection failed beyond the error text.
-- In the browser the server address is fixed at `ws://127.0.0.1:8080/ws`.
+- ~~In the browser the server address is fixed~~ Fixed by I2 below; it was:
 - "WebSocket is already closing" console noise after the other player leaves (harmless).
 
 ---

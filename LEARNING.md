@@ -768,3 +768,27 @@ Online play in the browser failed twice, both times *between* the two halves of 
 **How they were found:** two headless Chromium browsers played a real match through the real relay. The first bug showed up as a JavaScript error in the console. For the second, the server log showed "room created" and "match started" while the game screens never changed, which pointed at the receive path.
 
 **Where:** `web/mq_js_bundle.js` (both changes are marked with comments or sit next to Ram's R6 fix).
+
+---
+
+## Same-origin deployment (one app, one address)
+
+**What:** The relay serves the browser build (`server/src/web.rs`) when `WEB_DIR` is set, so the game page and the `/ws` WebSocket come from the *same address*. The page then connects to wherever it was loaded from: `ws://host/ws`, or `wss://host/ws` when the page is `https://`.
+
+**Why:** Browsers refuse a WebSocket to `ws://` from an `https://` page ("mixed content"), and hosting platforms provide HTTPS by terminating TLS in front of the app. If the page and relay share an address, the platform's HTTPS covers both with no certificates in our code, and there is no address to configure.
+
+**Safe file serving:** `web.rs` serves exactly four fixed URLs mapped to three fixed files, never a path from the request. Tests check `/secret.txt` and `/../secret.txt` in the same folder return 404 (path traversal is when `..` in a URL escapes the folder). The `.wasm` must be sent as `application/wasm`, or the browser won't compile it while streaming.
+
+**Where:** `server/src/web.rs`, `app_with_web` in `server/src/lib.rs`, `server/tests/web.rs`, the `Dockerfile` (`ENV WEB_DIR=/app/web`).
+
+---
+
+## Handing data from a web page to WebAssembly
+
+**What:** WASM can't read the page's URL. The page adds two functions to the module's *imports*: `riposte_server_url_len()` and `riposte_server_url_copy(ptr, capacity)`. The Rust side declares them in `extern "C"`, asks for the length, allocates a buffer of that size, and has the page write the UTF-8 bytes straight into the game's memory at `ptr`. macroquad's `miniquad_add_plugin` is the hook for adding imports.
+
+**Why this way:** it needs no new crates. The alternatives (a wasm-bindgen toolchain, or baking the address in at build time) add tooling or force a rebuild per deployment.
+
+**The choice itself** is plain JavaScript in `web/index.html` (`relayUrl`): `?server=` override first, then `ws://<host>:8080/ws` if the page is on some other dev port, else the page's own address. It was tested against fake locations including an HTTPS page.
+
+**Where:** `web/index.html` (`relayUrl`, the plugin), `server_url()` for wasm in `game/src/netplay.rs`. The `unsafe` block there is needed because calling a foreign function is unchecked; its comment says why it's sound.

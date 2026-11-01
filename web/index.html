@@ -22,6 +22,42 @@
          match the macroquad version in game/Cargo.toml). It gives the WASM
          module WebGL, keyboard input and timing. -->
     <script src="mq_js_bundle.js"></script>
-    <script>load("riposte-game.wasm");</script>
+    <script>
+        // Tells the game which relay to connect to. The .wasm calls these
+        // two functions (declared in game/src/netplay.rs); a plugin is how
+        // macroquad lets a page add functions to the module's imports.
+        function relayUrl() {
+            const params = new URLSearchParams(location.search);
+            // 1. ?server=wss://host/ws wins, for pointing at any relay.
+            if (params.get("server")) return params.get("server");
+            // 2. Dev: the page is served by something other than the relay
+            //    (e.g. python's http.server on :8000), so the relay is on
+            //    this machine's :8080.
+            const onOtherPort = location.port !== "" && location.port !== "8080";
+            if (location.protocol === "http:" && onOtherPort) {
+                return "ws://" + location.hostname + ":8080/ws";
+            }
+            // 3. Deployed: the relay serves this page, so use its own
+            //    address, secure (wss) whenever the page is https.
+            const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+            return scheme + "//" + location.host + "/ws";
+        }
+        miniquad_add_plugin({
+            name: "riposte_server_url",
+            version: 1,
+            register_plugin: function (importObject) {
+                importObject.env.riposte_server_url_len = function () {
+                    return new TextEncoder().encode(relayUrl()).length;
+                };
+                // Copies the URL's bytes into the game's memory at ptr.
+                importObject.env.riposte_server_url_copy = function (ptr, capacity) {
+                    const bytes = new TextEncoder().encode(relayUrl()).subarray(0, capacity);
+                    new Uint8Array(wasm_memory.buffer, ptr, bytes.length).set(bytes);
+                    return bytes.length;
+                };
+            },
+        });
+        load("riposte-game.wasm");
+    </script>
 </body>
 </html>

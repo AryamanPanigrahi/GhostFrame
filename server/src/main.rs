@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use riposte_server::{app, spawn_idle_sweeper, AppState, ROOM_IDLE_TIMEOUT, SWEEP_INTERVAL};
+use riposte_server::{
+    app_with_web, spawn_idle_sweeper, AppState, ROOM_IDLE_TIMEOUT, SWEEP_INTERVAL,
+};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -19,6 +21,16 @@ async fn main() -> anyhow::Result<()> {
     };
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
+    // WEB_DIR=web also serves the browser build from this same address.
+    let web_dir = std::env::var_os("WEB_DIR").map(std::path::PathBuf::from);
+    if let Some(dir) = &web_dir {
+        if dir.join("index.html").exists() {
+            info!(dir = %dir.display(), "serving the browser build");
+        } else {
+            tracing::warn!(dir = %dir.display(), "WEB_DIR has no index.html; run scripts/build-web.sh");
+        }
+    }
+
     let state = AppState::new();
     spawn_idle_sweeper(state.clone(), SWEEP_INTERVAL, ROOM_IDLE_TIMEOUT);
 
@@ -26,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("could not listen on {addr}"))?;
     info!(%addr, "relay listening on /ws");
-    axum::serve(listener, app(state))
+    axum::serve(listener, app_with_web(state, web_dir))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     info!("shut down");

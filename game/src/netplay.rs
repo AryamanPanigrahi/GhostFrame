@@ -22,11 +22,35 @@ use crate::sim::Input;
 const DEFAULT_SERVER: &str = "ws://127.0.0.1:8080/ws";
 
 /// The relay's address. On desktop, `RIPOSTE_SERVER` overrides it, e.g.
-/// `ws://192.168.1.20:8080/ws` to reach a server on another laptop. In the
-/// browser there are no environment variables, so it's the default until
-/// I2 decides how the page learns the address.
+/// `ws://192.168.1.20:8080/ws` to reach a server on another laptop.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn server_url() -> String {
     std::env::var("RIPOSTE_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.to_owned())
+}
+
+/// In the browser there are no environment variables; the page decides (see
+/// `relayUrl` in `web/index.html`: `?server=` override, else the page's own
+/// address) and hands the bytes over through two functions it adds to the
+/// module's imports.
+#[cfg(target_arch = "wasm32")]
+pub fn server_url() -> String {
+    extern "C" {
+        fn riposte_server_url_len() -> u32;
+        fn riposte_server_url_copy(ptr: *mut u8, capacity: u32) -> u32;
+    }
+    // SAFETY: both functions are provided by the page before the game
+    // starts, and `copy` writes at most `capacity` bytes into our buffer.
+    let (len, bytes) = unsafe {
+        let len = riposte_server_url_len() as usize;
+        let mut buf = vec![0u8; len];
+        let copied = riposte_server_url_copy(buf.as_mut_ptr(), len as u32) as usize;
+        buf.truncate(copied);
+        (len, buf)
+    };
+    match String::from_utf8(bytes) {
+        Ok(url) if len > 0 => url,
+        _ => DEFAULT_SERVER.to_owned(),
+    }
 }
 
 /// How long to wait for `MatchStart` after joining. The relay doesn't answer

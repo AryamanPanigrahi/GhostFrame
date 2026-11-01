@@ -71,7 +71,7 @@ riposte/
 │       │   └── effects.rs # game feel: flash, shake, hitstop visuals (Ram, G6)
 │       └── input.rs      # keyboard → input bitmask and menu keys
 ├── server/               # WebSocket relay (crate: riposte-server)
-│   └── src/main.rs
+│   └── src/        # main.rs, lib.rs, rooms.rs, protocol.rs, web.rs (serves the browser build when WEB_DIR is set)
 └── docs/
     ├── frame-walkthrough.md
     └── exercises.md
@@ -307,7 +307,7 @@ Reading before writing keeps the result independent of which player is updated f
 | quad-net | rewind (ws transport, browser only) | WebSocket client for WASM. Its desktop half aborts on current Rust on Windows (R6), so desktop uses tungstenite |
 | tungstenite | rewind (ws transport, desktop only) | Blocking WebSocket client, switched to non-blocking after the handshake; already in the tree via tokio-tungstenite |
 | serde, bincode | rewind, server | Message serialization |
-| tokio, axum | server | Async runtime + WebSocket server |
+| tokio, axum | server | Async runtime + WebSocket server (tokio `fs` feature: serves the web build, `web.rs`) |
 | thiserror / anyhow | libs / binaries | Error handling |
 | tracing, tracing-subscriber | server | Logs |
 | tokio-tungstenite, futures-util | server (dev-dependencies, tests only) | WebSocket client so `server/tests/relay.rs` can drive a real server (added in S1) |
@@ -352,8 +352,8 @@ Ownership is by milestone and file, not by crate.
 
 **Together**
 - ◐ **I1:** Online native vs native through the relay, tested on two laptops. *Code done (`netplay.rs`); verified browser vs browser through the real relay in the sandbox; the two-laptop test is still to do.*
-- **I2:** Online in the browser.
-- **I3:** Deploy server + client, public link in README.
+- ✅ **I2:** Online in the browser. *The page picks its relay address; verified browser vs browser in the sandbox.*
+- ◐ **I3:** Deploy server + client, public link in README. *Prep done: the relay serves the web build (`WEB_DIR`) and the Dockerfile includes it. A host, the README and desktop `wss://` are still to do.*
 
 **Dependencies**
 - R3 needs R1 merged first.

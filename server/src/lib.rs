@@ -3,7 +3,9 @@
 
 pub mod protocol;
 pub mod rooms;
+pub mod web;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -75,11 +77,20 @@ impl AppState {
 }
 
 pub fn app(state: AppState) -> Router {
-    Router::new()
-        // Hosting platforms poll a plain HTTP route to see the server is up.
-        .route("/", get(|| async { "riposte-server ok" }))
+    app_with_web(state, None)
+}
+
+/// The relay, plus the browser build if `web_dir` is given (see `web.rs`).
+pub fn app_with_web(state: AppState, web_dir: Option<PathBuf>) -> Router {
+    let router = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(state)
+        .with_state(state);
+    match web_dir {
+        // "/" is the game page, which also answers a host's health check.
+        Some(dir) => router.merge(web::routes(dir)),
+        // Hosting platforms poll a plain HTTP route to see the server is up.
+        None => router.route("/", get(|| async { "riposte-server ok" })),
+    }
 }
 
 /// Deletes idle rooms every `interval` until the process exits.

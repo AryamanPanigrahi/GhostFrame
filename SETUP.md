@@ -302,8 +302,40 @@ In PowerShell:
 $env:RIPOSTE_SERVER = "ws://192.168.1.20:8080/ws"; cargo run -p riposte-game
 ```
 
-**Browser:** build and serve `web/` (section 9) and open the page in two browser windows. The browser build always uses `ws://127.0.0.1:8080/ws` for now, so the server must run on the same machine. Choosing the address in the browser is part of I2/I3.
+**Browser:** build and serve `web/` (section 9) and open the page in two browser windows. The page now picks the relay address itself (I2): if served by something other than the relay on another port (e.g. `python3 -m http.server 8000`) it uses `ws://<same host>:8080/ws`; if served by the relay itself or any other address it uses that address (`wss://` when the page is `https://`). Add `?server=ws://192.168.1.20:8080/ws` to the page URL to point at any relay.
 
 **What you'll see:** an overlay with which player you are, how many frames were rolled back, and how many ticks were stalled. A **DESYNC** line would mean the two games differ, which is a bug to report. When the other player leaves, the match stops with a message.
 
 **New build setting for the browser:** `.cargo/config.toml` adds `-C link-arg=--allow-undefined` for the `wasm32-unknown-unknown` target only. The WebSocket code calls JavaScript functions (`ws_connect`, `ws_send`, ...) that only exist once the page's `mq_js_bundle.js` loads the `.wasm`. Without the flag the linker refuses to build. Cargo reads this file automatically, so `./scripts/build-web.sh` needs no changes.
+
+## 12. Hosting the game online (I3 prep)
+
+**What:** The relay can also serve the browser build, so **one hosted app is the whole game**: players open its URL, and the page connects back to the same address.
+
+**Try it locally, without Docker:**
+
+```bash
+./scripts/build-web.sh
+```
+
+```bash
+WEB_DIR=web cargo run -p riposte-server
+```
+
+Open http://localhost:8080 in two browser windows. Without `WEB_DIR` the relay behaves as before (`/` answers `riposte-server ok`).
+
+**With Docker** (the `Dockerfile` now also builds the browser version into the image; the first build compiles everything twice and takes a while):
+
+```bash
+docker build -t riposte-server .
+```
+
+```bash
+docker run --rm -p 8080:8080 riposte-server
+```
+
+**On a host:** any platform that builds a Dockerfile, gives the app an HTTPS address, and passes the port in `PORT` will do. Point it at this repo; no other settings are needed (`PORT` and `WEB_DIR` are handled by the image). The platform's HTTPS makes the page use `wss://` automatically. The platform choice and account are yours (I3).
+
+**Not yet done:** the desktop game only speaks plain `ws://`, so desktop players can't connect to an HTTPS-only host; they would need a TLS feature in rewind (see CLAUDE.md handoff notes). Browser players are unaffected.
+
+**Untested:** the `Dockerfile` itself could not be built in the sandbox (no Docker daemon). Its steps are the same commands run by hand there. If the build fails, the error will point at the step.

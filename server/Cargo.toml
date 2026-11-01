@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 # Async runtime + WebSocket server (see SETUP.md section 6).
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal", "fs"] }
 axum = { version = "0.8", features = ["ws"] }
 # ClientMsg / ServerMsg are serialized with bincode over binary frames.
 serde = { version = "1", features = ["derive"] }
