@@ -689,3 +689,44 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 **What:** `App::Practice(Box<Practice>)`. A Rust enum is as big as its largest variant. `Practice` holds two games and two snapshot rings, so storing it inline would make every `App` value, even the menu, that big. `Box` puts it on the heap, and the enum only stores a pointer.
 
 **Where:** `App` in `game/src/main.rs`.
+
+---
+
+## The relay client: a lobby, then a transport adapter
+
+**What:** Talking to the relay server has two stages.
+1. **Lobby:** `RelayClient` sends `CreateRoom` or `JoinRoom { code }` and reports `RoomCreated`, `MatchStart { player_index, seed }` or `PeerLeft`.
+2. **Match:** `into_match()` turns the same connection into a `RelayTransport`. It wraps each rollback message in `ClientMsg::Relay(bytes)` on the way out, and unwraps `ServerMsg::Relay(bytes)` on the way in.
+
+`RelayTransport` *is* a `Transport`, so `P2PSession` uses it without knowing a server exists. This is the **adapter** pattern: something that speaks one interface (the relay envelope) presented as another (rewind's `Transport`).
+
+**Two details that matter:**
+- The other player may send inputs the moment they see `MatchStart`, so relay bytes can arrive in the *same* poll as our `MatchStart`. The lobby keeps them and hands them to the transport. Test: `inputs_sent_right_after_match_start_are_not_lost`.
+- `P2PSession` owns the transport, so the game can't ask it "did the peer leave?". Instead the transport sets a shared `PeerLeft` flag (`Rc<Cell<bool>>`) that the game reads.
+
+**Where:** `game/src/relay.rs`.
+
+---
+
+## Keeping two copies of a protocol in sync
+
+**What:** The game needs `ClientMsg`/`ServerMsg`, but it can't depend on the server crate (that would pull tokio and axum into the browser build). So `relay.rs` has a copy. The test `copies_match_the_server_byte_for_byte` encodes every variant with *both* the game's and the server's types and compares the bytes. Bincode encodes an enum variant by its *position*, so reordering variants silently changes the bytes. Swapping two variants on purpose made all 5 relay tests fail.
+
+**Dev-dependencies** make this possible: `[dev-dependencies]` in `game/Cargo.toml` are compiled only for `cargo test`. The tests can use the server's types and room logic, while the game and its browser build never include them.
+
+**Where:** `game/src/relay.rs` (the enums and the byte test), `game/Cargo.toml`.
+
+---
+
+## Testing against the real server logic without sockets
+
+**What:** Ram's `Rooms` (`server/src/rooms.rs`) has no sockets in it: each connection is just an id and a message channel. The test harness `InProcessRelay` does what the WebSocket handler does:
+1. Decode each client's `ClientMsg`.
+2. Call `create_room`, `join_room` or `relay`.
+3. Send back whatever the rooms put in each connection's channel.
+
+So the tests run the **same room code the deployed server runs**: real room codes, real `MatchStart` seeds, real relaying and `PeerLeft`. They're still instant and repeatable.
+
+**Why:** It checks the whole online path except the socket itself: lobby, then match start, then a full rollback match over the relay. When R6 adds the WebSocket, only that last piece is new.
+
+**Where:** the tests module of `game/src/relay.rs` (`InProcessRelay`, `full_online_match_over_the_relay_stays_in_sync`).

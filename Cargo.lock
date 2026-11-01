@@ -734,8 +734,12 @@ dependencies = [
 name = "riposte-game"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "macroquad",
  "rewind",
+ "riposte-server",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

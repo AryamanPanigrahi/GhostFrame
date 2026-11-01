@@ -23,9 +23,9 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R5: checksums, desync, stall | Ram | Not started (unblocked: R3 is done) |
 | R6: WebSocket transport | Ram | Not started |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag); real connection needs R5 + R6 |
+| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag, relay client tested against the real room logic); real connection needs R5 + R6 |
 
-**Tests:** 159 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 92 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 164 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 97 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
 
 ---
 
@@ -283,7 +283,33 @@ cargo run -p riposte-server
 - two online matches identical every tick without lag (1);
 - practice: worst preset rolls back without crashing, no lag means both sides agree every tick, switching lag mid-match is safe (3).
 
-**What I1 still needs:** R6's WebSocket transport, a small client for the relay's `ClientMsg`/`ServerMsg` (create or join a room, wait for `MatchStart`), wiring the menu's Create/Join to it, and R5's stall and desync events.
+**What I1 still needs:** R6's WebSocket transport, wiring the menu's Create/Join to the relay client (below), and R5's stall and desync events.
+
+---
+
+## I1 prep, part 2: relay client (Aryaman)
+
+**Gist:**
+- `RelayClient` does the lobby: create or join, then wait for `RoomCreated`, `MatchStart` or `PeerLeft`.
+- After `MatchStart`, `into_match()` turns the connection into a `RelayTransport`. It wraps rollback messages in `ClientMsg::Relay`, unwraps `ServerMsg::Relay`, and sets a `PeerLeft` flag the game can read.
+- It works over any raw `Transport`. R6's WebSocket transport plugs straight in.
+
+**Tested against the server's real room logic, in-process** (`Rooms` from `server/src/rooms.rs`, no sockets):
+- Create, then join with a lowercase code: both players get `MatchStart` with indices 0 and 1 and the same seed.
+- A full 20 s bot-vs-bot `OnlineMatch` over the relay ends identical on both sides.
+- `PeerLeft` mid-match sets the flag.
+- Inputs sent right after `MatchStart` aren't lost.
+
+**Files:** `game/src/relay.rs`.
+- `game/Cargo.toml`: `serde` + `bincode` as dependencies.
+- `riposte-server` + `tokio` (`sync`) as **dev-dependencies**: tests only, never in the game or the browser build, all already in `Cargo.lock`.
+- `mod relay` in `main.rs` is marked `#[allow(dead_code)]` until I1 wires it to the menu.
+
+**Decisions:**
+- The game keeps a copy of the frozen `ClientMsg`/`ServerMsg` (it can't depend on the server crate). A test compares the bytes of every variant with the server's types, and swapping two variants on purpose made all 5 relay tests fail.
+
+**Tests:** 5 new: the byte test plus the four above.
+
 
 ---
 
@@ -393,6 +419,8 @@ cargo test -p riposte-game sync -- --nocapture
 ---
 
 ## Open questions
+
+- **One home for `ClientMsg`/`ServerMsg` (for Ram):** right now the server and the game each have a copy, kept in sync by a byte-level test. A cleaner option is to move both enums into `rewind/src/protocol.rs` (game-agnostic, already a dependency of both), with the server importing them. That moves frozen-protocol code between Ram's files, so it needs both of you to agree.
 
 - **Blocking** isn't in any milestone, so G4 doesn't have it. Suggestion: hold back to block, as a small step before G5.
 - **Round timer:** there's no time-out yet, so a round only ends by KO. Should rounds have one (e.g. 99 s, most health wins)?

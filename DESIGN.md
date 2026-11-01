@@ -52,6 +52,7 @@ riposte/
 │       ├── driver.rs     # TickDriver: frames → ticks, input kept between ticks
 │       ├── online.rs     # OnlineMatch: GameState + P2PSession over any Transport
 │       ├── practice.rs   # Practice vs lag: you vs bot over the fake network
+│       ├── relay.rs      # relay client: lobby (create/join) + Relay-envelope transport
 │       ├── bot.rs        # simple computer opponent (inputs only)
 │       ├── clock.rs      # real time → fixed 1/60 s ticks
 │       ├── session.rs    # LocalSession (both players on one keyboard)
@@ -302,6 +303,8 @@ Reading before writing keeps the result independent of which player is updated f
 | Crate | Used in | Why |
 |---|---|---|
 | macroquad | game | Window, input, 2D drawing; compiles to WASM easily |
+| serde, bincode | game | Relay messages (`relay.rs`), same versions as the server |
+| riposte-server, tokio (`sync`) | game (dev-dependencies, tests only) | Relay-client tests run the server's real room logic in-process |
 | quad-net | rewind (ws transport) | WebSocket client that works on native **and** WASM |
 | serde, bincode | rewind, server | Message serialization |
 | tokio, axum | server | Async runtime + WebSocket server |
@@ -348,7 +351,7 @@ Ownership is by milestone and file, not by crate.
 - ◐ **G6:** *(partly done: flash and shake; see PROGRESS.md)* Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
-- **I1:** Online native vs native through the relay, tested on two laptops. *Prep done: `OnlineMatch` and practice vs lag; waiting on R5 and R6.*
+- **I1:** Online native vs native through the relay, tested on two laptops. *Prep done: `OnlineMatch`, practice vs lag, and the relay client (`relay.rs`) tested against the server's real room logic; waiting on R5 and R6.*
 - **I2:** Online in the browser.
 - **I3:** Deploy server + client, public link in README.
 

@@ -115,6 +115,14 @@ cargo test -p riposte-game sync -- --nocapture
 
 The game uses `rewind` as a *path dependency* (`rewind = { path = "../rewind" }` in `game/Cargo.toml`): Cargo builds it from the folder next door instead of downloading it, so there's nothing to install.
 
+Run the relay-client tests (I1 prep): a full lobby and a 20 s bot-vs-bot online match whose messages go through the server's real room logic, in-process:
+
+```bash
+cargo test -p riposte-game relay
+```
+
+The game now lists `serde` (with `derive`) and `bincode` as dependencies, for encoding the relay messages. It also has two **dev-dependencies**, compiled only for `cargo test` and never into the game or the browser build: `riposte-server` (a path dependency, so the tests can use the server's own room logic and message types) and `tokio` with only its `sync` feature (the room logic's message channels). All four were already in `Cargo.lock`, so nothing new is downloaded.
+
 Run the network convergence tests (R4): 200 random bad networks (latency, jitter, loss, reordering), and both peers must end identical. `--nocapture` prints how much rolling back and message loss happened:
 
 ```bash
