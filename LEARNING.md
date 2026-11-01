@@ -731,3 +731,40 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 **Same enums, two crates:** `ClientMsg` / `ServerMsg` are defined in both `server/src/protocol.rs` and `websocket.rs`. bincode encodes an enum variant by its position, so they must stay in the same order. The test `server/tests/rewind_client.rs` runs the real transport against the real server, so any mismatch fails there.
 
 **Where:** `rewind/src/transport/websocket.rs`; end-to-end in `server/tests/rewind_client.rs`.
+
+---
+
+## The online lobby and match screens (I1)
+
+**What:** Online play goes **menu → `Lobby` → `OnlineScreen`**.
+- **`Lobby`** holds Ram's `WebSocketTransport` and reads its `lobby_events()` each frame: `RoomCreated` shows the code, `MatchStart { player_index, seed }` hands the transport to a new `OnlineMatch`, and `PeerLeft` ends the lobby.
+- **`OnlineScreen`** runs the match through a `TickDriver`. It records R5's `Desync` event (shown as a loud warning) and stops the match when the other player leaves.
+
+**Timeouts as the only signal:** the relay answers a wrong or full room code by closing the connection, because the frozen `ServerMsg` has no error variant. So the joining side treats 5 seconds without `MatchStart` as "no such room (or it's full)".
+
+**Reaching the transport mid-match:** `P2PSession` owns the transport, so the game can't call `lobby_events()` on it directly. `P2PSession::transport_mut()` (and `OnlineMatch::transport_mut()`) give that access, and the game uses it only to read the relay's `PeerLeft`. Sending or polling through it would bypass the session.
+
+**Where:** `game/src/netplay.rs` (`Lobby`, `OnlineScreen`, `server_url`), the `App::Lobby` / `App::Online` arms in `game/src/main.rs`, and `P2PSession::transport_mut` in `rewind/src/session/p2p.rs`. Tests use a fake `ByteSocket` that plays the relay's side.
+
+---
+
+## WebAssembly imports and `--allow-undefined`
+
+**What:** A `.wasm` module can *import* functions that the page provides. quad-net declares `extern "C" { fn ws_connect(...); }` with no Rust body, because the body is JavaScript in `mq_js_bundle.js`. Current Rust treats such missing functions as a link error for `wasm32-unknown-unknown`. The linker flag `--allow-undefined` turns them into imports from the `env` module instead, and the page fills them in when it loads the `.wasm`.
+
+**Why it appeared only now:** until the menu called `WebSocketTransport::connect`, no code used quad-net. The linker threw that code away, and the missing functions never mattered.
+
+**Where:** `.cargo/config.toml`. You can check the result by listing a module's imports with `WebAssembly.Module.imports(...)` in Node.
+
+---
+
+## Debugging the browser bundle: two bugs between JavaScript and Rust
+
+Online play in the browser failed twice, both times *between* the two halves of quad-net. Each was fixed with a one-line change in `web/mq_js_bundle.js`.
+
+1. **`consume_js_object is not defined`:** the bundle was minified. The minifier wrapped the `sapp_jsutils` helpers in a private scope and renamed them (`js_object` became `t`, `consume_js_object` became `a`). The quad-net code still calls them by their original global names. Fix: publish them as `window.js_object`, `window.consume_js_object` and `window.get_js_object`.
+2. **Nothing ever received:** quad-net 0.1.2's JavaScript stores each binary message as `{text: 0, data: bytes}`, but its Rust side copies bytes from the *outer object*, which has no length. So every binary message arrived empty, and all our messages are binary (bincode). Fix: push the byte array itself, with `text = 0` set on it.
+
+**How they were found:** two headless Chromium browsers played a real match through the real relay. The first bug showed up as a JavaScript error in the console. For the second, the server log showed "room created" and "match started" while the game screens never changed, which pointed at the receive path.
+
+**Where:** `web/mq_js_bundle.js` (both changes are marked with comments or sit next to Ram's R6 fix).

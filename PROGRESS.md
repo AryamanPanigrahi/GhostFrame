@@ -23,9 +23,9 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R5: checksums, desync, stall | Ram | ✅ Done |
 | R6: WebSocket transport | Ram | ✅ Done (browser end-to-end waits for I2) |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag). R5 and R6 are in; next is wiring `WebSocketTransport` into the menu |
+| I1–I3: online play, browser, deploy | Together | I1 ◐ code done: Create/Join → lobby → online match. Verified browser vs browser through the real relay; the two-laptop test is yours |
 
-**Tests:** 175 tests, all passing (`cargo test --workspace`): 63 in `rewind` (including R5's stall/desync tests and 4 network convergence tests), 92 in `riposte-game`, 20 in `riposte-server` (including R6's end-to-end tests: two `WebSocketTransport`s and two rollback sessions through a real server over real sockets). fmt and clippy clean.
+**Tests:** 181 tests, all passing (`cargo test --workspace`): 63 in `rewind` (including R5's stall/desync tests and 4 network convergence tests), 98 in `riposte-game`, 20 in `riposte-server` (including R6's end-to-end tests: two `WebSocketTransport`s and two rollback sessions through a real server over real sockets). fmt and clippy clean.
 
 ---
 
@@ -260,6 +260,51 @@ cargo run -p riposte-server
 
 ---
 
+## I1: online play through the relay (Aryaman)
+
+**Gist:**
+- **Create online room** connects to the relay and shows the 4-letter code. **Join online room** connects and joins.
+- On `MatchStart` the game starts an `OnlineMatch` with the player index and seed.
+- During the match an overlay shows your player number, frames rolled back and ticks stalled, plus a loud DESYNC warning if R5 ever reports one.
+- If the other player leaves, the match stops with a message.
+- The server address defaults to `ws://127.0.0.1:8080/ws`. On desktop, `RIPOSTE_SERVER` overrides it.
+
+**Verified in the sandbox:** the real relay server plus two separate headless Chromium browsers. One created a room, the other joined with the code from the server log, and both fought for a few seconds.
+- Both showed the same match: same health (640 / 950) and positions.
+- Rollbacks happened (41 and 63 frames, deepest 7) and stalls kicked in (the software renderer ran at ~17 fps).
+- There was no desync. Closing one browser showed "The other player left" in the other.
+- **Not verified here:** native vs native through the menu. Ram's `server/tests/rewind_client.rs` covers the native transport plus sessions over real sockets, but the two-laptop test (I1's definition) is for you and Ram.
+
+**Found and fixed on the way (browser build):**
+1. The WASM link failed with "undefined symbol: ws_connect". The fix is `.cargo/config.toml` with `--allow-undefined` for the wasm target. It only appeared once the game actually called the WebSocket code.
+2. `consume_js_object is not defined`: the minified bundle hid the `sapp_jsutils` helpers that quad-net calls by their global names. One-line fix in `web/mq_js_bundle.js`.
+3. Nothing was ever received: quad-net 0.1.2's Rust side reads binary messages from the wrong JavaScript object, so they arrived empty. One-line fix in `web/mq_js_bundle.js`.
+
+**Files:**
+- `game/src/netplay.rs` (`Lobby`, `OnlineScreen`, `server_url`).
+- `App::Lobby` / `App::Online` in `game/src/main.rs`, and `draw_text_screen` in `render/mod.rs`.
+- `OnlineMatch::transport_mut` / `stalled_ticks`.
+- `P2PSession::transport_mut` (R3 file).
+- `pub type DefaultSocket` in Ram's `rewind/src/transport/websocket.rs`: a one-word visibility change so the game can name the platform's socket type.
+- `.cargo/config.toml` and `web/mq_js_bundle.js`.
+- `serde` + `bincode` as test-only dev-dependencies of the game.
+
+**Tests:** 6 new (fake socket playing the relay's side):
+- create shows the code, then starts as P1;
+- join starts as P2;
+- join with no answer times out after 5 s;
+- the opponent leaving before the start fails the lobby;
+- the opponent leaving mid-match stops it;
+- peer inputs arriving through the relay are used without guesses.
+
+**Still open for I1/I2:**
+- The two-laptop test.
+- Errors don't say *why* a native connection failed beyond the error text.
+- In the browser the server address is fixed at `ws://127.0.0.1:8080/ws`.
+- "WebSocket is already closing" console noise after the other player leaves (harmless).
+
+---
+
 ## I1 prep: online match plumbing and "Practice vs lag" (Aryaman)
 
 **Gist:**
@@ -283,11 +328,7 @@ cargo run -p riposte-server
 - two online matches identical every tick without lag (1);
 - practice: worst preset rolls back without crashing, no lag means both sides agree every tick, switching lag mid-match is safe (3).
 
-**What I1 still needs (R5 and R6 are now on `main`):**
-- Wire the menu's Create/Join to `rewind::WebSocketTransport` (connect, `create_room`/`join_room`, show the room code, wait for `MatchStart` in `lobby_events`).
-- Then hand the transport to `OnlineMatch` with that player index and seed.
-- Handle `Event::Stalled` and `Event::Desync` from `tick`.
-- **Gap to solve:** once `P2PSession` owns the transport, the game can no longer read `lobby_events()`, so a `PeerLeft` mid-match goes unnoticed. `P2PSession` doesn't emit `Event::Disconnected` yet.
+**What I1 still needed:** done in the I1 section above.
 
 (A separate relay client was written in `game/src/relay.rs` before R6 landed, then dropped unmerged: R6's `WebSocketTransport` already does the lobby and the relay wrapping, and Ram's `server/tests/rewind_client.rs` tests the same path over real sockets.)
 

@@ -194,6 +194,17 @@ pub fn draw_overlay(lines: &[String]) {
     }
 }
 
+/// A plain screen of text (the online lobby).
+pub fn draw_text_screen(lines: &[String]) {
+    clear_background(BLACK);
+    let view = View::for_window((0.0, 0.0));
+    view.rect(0.0, 0.0, LOGICAL_W, LOGICAL_H, DARKGRAY);
+    view.text("RIPOSTE ONLINE", 80.0, 140.0, 56.0, WHITE);
+    for (i, line) in lines.iter().enumerate() {
+        view.text(line, 80.0, 260.0 + i as f32 * 40.0, 28.0, WHITE);
+    }
+}
+
 /// Placeholder menu: plain text, the selected item marked with ">".
 pub fn draw_menu(menu: &Menu) {
     clear_background(BLACK);

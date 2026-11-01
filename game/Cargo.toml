@@ -10,3 +10,10 @@ macroquad = "0.4.16"
 # Our rollback library, from this workspace (a path dependency, nothing to
 # download). G5 implements its RollbackGame trait for GameState.
 rewind = { path = "../rewind" }
+
+[dev-dependencies]
+# Tests only (never in the game or the browser build): netplay.rs tests play
+# the relay's side of the protocol on a fake socket. Both already in the
+# workspace, same versions as rewind and the server.
+serde = { version = "1", features = ["derive"] }
+bincode = "1"

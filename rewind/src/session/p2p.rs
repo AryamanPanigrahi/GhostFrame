@@ -196,6 +196,15 @@ impl<G: RollbackGame, T: Transport> P2PSession<G, T> {
         self.deepest_rollback
     }
 
+    /// The transport, for things only the game knows how to ask it. The
+    /// session owns it, so this is the only way to reach it mid-match: Riposte
+    /// reads `WebSocketTransport::lobby_events` through this to notice the
+    /// relay's `PeerLeft` (I1). Sending or polling through it directly would
+    /// bypass the session, so don't.
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+
     fn remote_player(&self) -> usize {
         1 - self.local_player
     }

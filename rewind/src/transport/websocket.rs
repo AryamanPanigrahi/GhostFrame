@@ -140,10 +140,12 @@ mod native {
     }
 }
 
+/// The socket `WebSocketTransport::connect` uses on this platform. Public
+/// so the game can name `Lobby<DefaultSocket>` in its screen enum (I1).
 #[cfg(target_arch = "wasm32")]
-type DefaultSocket = browser::BrowserSocket;
+pub type DefaultSocket = browser::BrowserSocket;
 #[cfg(not(target_arch = "wasm32"))]
-type DefaultSocket = native::NativeSocket;
+pub type DefaultSocket = native::NativeSocket;
 
 /// Client to relay messages. Must stay identical to `ClientMsg` in
 /// `server/src/protocol.rs`: bincode encodes a variant by its position, so

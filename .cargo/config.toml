@@ -1,0 +1,8 @@
+# Build settings Cargo applies automatically in this repository.
+
+[target.wasm32-unknown-unknown]
+# The browser build calls JavaScript functions (quad-net's ws_connect,
+# ws_send, ...) that only exist once the page's mq_js_bundle.js loads the
+# .wasm. The linker must leave them as imports instead of failing on
+# "undefined symbol". Only affects the browser target. See SETUP.md section 9.
+rustflags = ["-C", "link-arg=--allow-undefined"]

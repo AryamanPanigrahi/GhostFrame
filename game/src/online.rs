@@ -41,6 +41,16 @@ impl<T: Transport> OnlineMatch<T> {
     pub fn deepest_rollback(&self) -> u32 {
         self.session.deepest_rollback()
     }
+
+    /// Ticks skipped because this side was too far ahead of the other (R5).
+    pub fn stalled_ticks(&self) -> u64 {
+        self.session.stalled_ticks()
+    }
+
+    /// The connection, e.g. to read the relay's lobby events mid-match.
+    pub fn transport_mut(&mut self) -> &mut T {
+        self.session.transport_mut()
+    }
 }
 
 #[cfg(test)]

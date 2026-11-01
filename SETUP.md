@@ -273,3 +273,37 @@ This starts a real relay on a free port and plays two `P2PSession`s through it w
 ```bash
 cargo build -p rewind --target wasm32-unknown-unknown
 ```
+
+## 11. Online play (I1)
+
+**What:** Two copies of the game play each other through the relay server. "Create online room" shows a 4-letter code; the other player picks "Join online room" and types it. Each player uses either key set, and Esc leaves.
+
+**Step 1: run the relay** on one machine (section 7):
+
+```bash
+cargo run -p riposte-server
+```
+
+**Step 2a: both players on the same machine** (quick check): start two games, Create in one and Join in the other. The default server address is `ws://127.0.0.1:8080/ws`.
+
+```bash
+cargo run -p riposte-game
+```
+
+**Step 2b: two laptops on the same network:** find the IP address of the laptop running the server (e.g. `192.168.1.20`; `ipconfig` on Windows, `ip addr` on Linux, System Settings → Network on macOS). On **both** laptops, point the game at it with the `RIPOSTE_SERVER` environment variable. The server's laptop may need to allow incoming connections on port 8080 in its firewall.
+
+```bash
+RIPOSTE_SERVER=ws://192.168.1.20:8080/ws cargo run -p riposte-game
+```
+
+In PowerShell:
+
+```powershell
+$env:RIPOSTE_SERVER = "ws://192.168.1.20:8080/ws"; cargo run -p riposte-game
+```
+
+**Browser:** build and serve `web/` (section 9) and open the page in two browser windows. The browser build always uses `ws://127.0.0.1:8080/ws` for now, so the server must run on the same machine. Choosing the address in the browser is part of I2/I3.
+
+**What you'll see:** an overlay with which player you are, how many frames were rolled back, and how many ticks were stalled. A **DESYNC** line would mean the two games differ, which is a bug to report. When the other player leaves, the match stops with a message.
+
+**New build setting for the browser:** `.cargo/config.toml` adds `-C link-arg=--allow-undefined` for the `wasm32-unknown-unknown` target only. The WebSocket code calls JavaScript functions (`ws_connect`, `ws_send`, ...) that only exist once the page's `mq_js_bundle.js` loads the `.wasm`. Without the flag the linker refuses to build. Cargo reads this file automatically, so `./scripts/build-web.sh` needs no changes.

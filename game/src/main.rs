@@ -3,6 +3,7 @@ mod clock;
 mod driver;
 mod input;
 mod menu;
+mod netplay;
 mod online;
 mod practice;
 mod render;
@@ -16,7 +17,10 @@ use input::{
 };
 use macroquad::prelude::*;
 use menu::{Menu, MenuAction};
+use netplay::{server_url, Lobby, OnlineScreen};
 use practice::Practice;
+use rewind::transport::websocket::DefaultSocket;
+use rewind::WebSocketTransport;
 use session::LocalSession;
 use sim::GameState;
 
@@ -34,10 +38,13 @@ fn window_conf() -> Conf {
 /// Online, the seed comes from the server's `MatchStart` message.
 const LOCAL_SEED: u64 = 1;
 
-/// Shown for the online menu items until the relay server (S1), the
-/// WebSocket transport (R6) and the online session are joined up in I1.
-/// `\n` starts a new line on screen.
-const ONLINE_NOT_READY: &str = "Online play isn't connected yet.\nIt needs the relay server and WebSocket transport (milestone I1).";
+/// Connect to the relay for "Create room" / "Join room". On desktop this
+/// waits for the connection to open, so a stopped server shows up as an
+/// error here rather than a lobby that never answers.
+fn connect_to_relay() -> Result<WebSocketTransport, String> {
+    let url = server_url();
+    WebSocketTransport::connect(&url).map_err(|e| format!("{e}\nServer address: {url}"))
+}
 
 /// Microseconds since the game started. macroquad gives seconds as f64; we
 /// convert once here so the clock works in whole numbers.
@@ -87,6 +94,9 @@ enum App {
     /// Boxed because it holds two games and two snapshot rings, much bigger
     /// than the other variants.
     Practice(Box<Practice>),
+    /// Connected to the relay, waiting for a room code or the other player.
+    Lobby(Box<Lobby<DefaultSocket>>),
+    Online(Box<OnlineScreen<DefaultSocket>>),
 }
 
 // macroquad's main is async: `next_frame().await` hands control back to the
@@ -114,12 +124,14 @@ async fn main() {
                         Some(MenuAction::StartPractice) => {
                             switch_to = Some(App::Practice(Box::new(Practice::new())));
                         }
-                        Some(MenuAction::CreateRoom) => {
-                            menu.show_notice(ONLINE_NOT_READY.to_owned());
-                        }
-                        Some(MenuAction::JoinRoom { code }) => {
-                            menu.show_notice(format!("Room {code}\n{ONLINE_NOT_READY}"));
-                        }
+                        Some(MenuAction::CreateRoom) => match connect_to_relay() {
+                            Ok(t) => switch_to = Some(App::Lobby(Box::new(Lobby::create(t)))),
+                            Err(e) => menu.show_notice(e),
+                        },
+                        Some(MenuAction::JoinRoom { code }) => match connect_to_relay() {
+                            Ok(t) => switch_to = Some(App::Lobby(Box::new(Lobby::join(t, &code)))),
+                            Err(e) => menu.show_notice(e),
+                        },
                         None => {}
                     }
                 }
@@ -142,6 +154,24 @@ async fn main() {
                 practice.update(elapsed, read_either_player());
                 render::draw(&practice.you.game, &mut practice.you.effects);
                 render::draw_overlay(&practice.overlay());
+            }
+            App::Lobby(lobby) => {
+                if back_pressed() {
+                    switch_to = Some(App::Menu(Menu::default()));
+                } else if let Some(screen) = lobby.update(elapsed) {
+                    switch_to = Some(App::Online(Box::new(screen)));
+                }
+                render::draw_text_screen(&lobby.lines());
+            }
+            App::Online(screen) => {
+                if back_pressed() {
+                    // Dropping the screen closes the connection; the relay
+                    // then tells the other player we left.
+                    switch_to = Some(App::Menu(Menu::default()));
+                }
+                screen.update(elapsed, read_either_player());
+                render::draw(&screen.online.game, &mut screen.online.effects);
+                render::draw_overlay(&screen.overlay());
             }
         }
         if let Some(next) = switch_to {

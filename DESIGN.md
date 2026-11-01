@@ -31,7 +31,8 @@ riposte/
 ├── PROGRESS.md           # what's built so far: status, gist, files, decisions
 ├── SETUP.md              # every setup command, explained, to run by hand
 ├── scripts/build-web.sh  # WASM build into web/
-├── web/                  # browser build: index.html + macroquad's JS loader
+├── web/                  # browser build: index.html + macroquad's JS loader (with 3 quad-net fixes)
+├── .cargo/config.toml    # --allow-undefined for the wasm target (JS-provided imports)
 ├── rewind/               # rollback netcode library (crate: rewind)
 │   ├── src/
 │   │   ├── lib.rs
@@ -51,6 +52,7 @@ riposte/
 │       ├── menu.rs       # main menu: local / practice / create room / join with code
 │       ├── driver.rs     # TickDriver: frames → ticks, input kept between ticks
 │       ├── online.rs     # OnlineMatch: GameState + P2PSession over any Transport
+│       ├── netplay.rs    # I1: lobby (create/join via WebSocketTransport) + online match screen
 │       ├── practice.rs   # Practice vs lag: you vs bot over the fake network
 │       ├── bot.rs        # simple computer opponent (inputs only)
 │       ├── clock.rs      # real time → fixed 1/60 s ticks
@@ -349,7 +351,7 @@ Ownership is by milestone and file, not by crate.
 - ◐ **G6:** *(partly done: flash and shake; see PROGRESS.md)* Game feel, render-only (new files under `game/src/render/`, e.g. `render/effects.rs`, called from Aryaman's `render/mod.rs`): hit flash, shake, hitstop visuals, tuning of frame data.
 
 **Together**
-- **I1:** Online native vs native through the relay, tested on two laptops. *Prep done: `OnlineMatch` and practice vs lag; waiting on R5 and R6.*
+- ◐ **I1:** Online native vs native through the relay, tested on two laptops. *Code done (`netplay.rs`); verified browser vs browser through the real relay in the sandbox; the two-laptop test is still to do.*
 - **I2:** Online in the browser.
 - **I3:** Deploy server + client, public link in README.
 
