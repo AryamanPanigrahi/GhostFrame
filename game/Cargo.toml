@@ -10,15 +10,3 @@ macroquad = "0.4.16"
 # Our rollback library, from this workspace (a path dependency, nothing to
 # download). G5 implements its RollbackGame trait for GameState.
 rewind = { path = "../rewind" }
-# The relay client (relay.rs) encodes ClientMsg/ServerMsg itself, with the
-# same serde + bincode versions as the server, so the bytes match.
-serde = { version = "1", features = ["derive"] }
-bincode = "1"
-
-[dev-dependencies]
-# Tests only, never in the game or the browser build: relay.rs tests run the
-# real server's room logic in-process and compare protocol bytes with the
-# server's own types. Both are already in the workspace (nothing new is
-# downloaded); tokio is only needed for the room logic's message channels.
-riposte-server = { path = "../server" }
-tokio = { version = "1", features = ["sync"] }

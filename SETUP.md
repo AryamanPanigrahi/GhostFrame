@@ -115,14 +115,6 @@ cargo test -p riposte-game sync -- --nocapture
 
 The game uses `rewind` as a *path dependency* (`rewind = { path = "../rewind" }` in `game/Cargo.toml`): Cargo builds it from the folder next door instead of downloading it, so there's nothing to install.
 
-Run the relay-client tests (I1 prep): a full lobby and a 20 s bot-vs-bot online match whose messages go through the server's real room logic, in-process:
-
-```bash
-cargo test -p riposte-game relay
-```
-
-The game now lists `serde` (with `derive`) and `bincode` as dependencies, for encoding the relay messages. It also has two **dev-dependencies**, compiled only for `cargo test` and never into the game or the browser build: `riposte-server` (a path dependency, so the tests can use the server's own room logic and message types) and `tokio` with only its `sync` feature (the room logic's message channels). All four were already in `Cargo.lock`, so nothing new is downloaded.
-
 Run the network convergence tests (R4): 200 random bad networks (latency, jitter, loss, reordering), and both peers must end identical. `--nocapture` prints how much rolling back and message loss happened:
 
 ```bash
@@ -250,3 +242,34 @@ Then open http://localhost:8000 and click the page once so it receives keyboard 
 - `index.html`: a full-page canvas with the id `glcanvas`, which macroquad draws into, plus two script tags.
 - `mq_js_bundle.js`: macroquad's JavaScript glue. It gives the WASM module WebGL, keyboard events and a clock. It's copied unchanged from macroquad 0.4.16's `js/` folder (MIT/Apache, like macroquad itself) and **must match the macroquad version in `game/Cargo.toml`**. If macroquad is upgraded, copy the new one from `~/.cargo/registry/src/*/macroquad-<version>/js/mq_js_bundle.js`.
 - `riposte-game.wasm`: the build output. It's in `.gitignore`, so it's rebuilt rather than committed.
+
+---
+
+## 10. WebSocket client dependencies (R6)
+
+**What:** `rewind` needs a WebSocket *client* to talk to the relay. There are two, one per platform, chosen in `rewind/Cargo.toml` with a `target` condition:
+
+| Crate | Used when | What it is |
+|---|---|---|
+| `tungstenite` (feature `handshake`) | desktop builds | A WebSocket client library. We open the connection with its blocking `connect`, then switch the socket to non-blocking so `poll` never stalls the game loop. Already in the dependency tree through the server's `tokio-tungstenite`. |
+| `quad-net` (listed in DESIGN.md section 9) | `wasm32` (browser) builds | Wraps the browser's own `WebSocket` object, called from Rust through a small JavaScript file. |
+
+**Why two:** DESIGN.md planned quad-net for both. Its desktop half is built on an old network library (`mio 0.6`) that aborts the whole program on current Rust on Windows ("null reference produced"), even for a successful connection. So desktop uses tungstenite, and quad-net is kept only for the browser, where it is the part that matters.
+
+Nothing to install for the desktop build. For the browser build see section 9; the one extra step is below.
+
+**The browser JavaScript fix:** `web/mq_js_bundle.js` is macroquad's JS glue, and it contains quad-net's JavaScript. That code does `register_plugin = function ...` without declaring the variable, which is an error in the strict mode the bundle runs in, so the plugin never registered. We changed that one spot in our copy to `var register_plugin; register_plugin = function ...`. **If you replace `mq_js_bundle.js` with a new macroquad version, redo this edit**, then confirm in the browser console (`plugins.map(p => p.name)` should include `"quad_net"`).
+
+**Run the tests that use real sockets:**
+
+```bash
+cargo test -p riposte-server --test rewind_client
+```
+
+This starts a real relay on a free port and plays two `P2PSession`s through it with `WebSocketTransport`.
+
+**Check the browser build of rewind compiles:**
+
+```bash
+cargo build -p rewind --target wasm32-unknown-unknown
+```

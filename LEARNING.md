@@ -644,11 +644,35 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 
 ---
 
-## The prediction envelope (why R5's stall matters)
+## Stalling when too far ahead (R5)
 
-**What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed. The fake network caps how late a message can be (`latency + jitter + max_loss_streak` ticks) so the tests stay inside that envelope. `lag_beyond_max_prediction_needs_the_r5_stall` shows what happens past it: with 20 ticks of latency, the session needs a snapshot that's already gone and panics with a clear message.
+**What:** A session may run at most `max_prediction` frames ahead of the last frame it has the peer's real input for. At that point `tick` doesn't advance the game: it still sends (so the peer gets our inputs and acknowledgements), reports `Event::Stalled`, and tries again next tick. The check is `P2PSession::too_far_ahead`: `current_frame >= confirmed_end + max_prediction`, where `confirmed_end` is the first frame whose remote input is unknown.
 
-**Why:** On a real connection, a lag spike can always go past any fixed limit. The fix (R5) is to *stall*: a session that is too far ahead of the last input it got from its peer skips advancing for a tick and waits, instead of guessing further. Until R5 lands, online play over a real network can crash on a big lag spike.
+**Why:** A rollback can only go back as far as the snapshot ring reaches (`max_prediction + 2` frames). Without a limit, a lag spike makes the session guess further than that and the next correction has nothing to load. Stalling turns "crash or silent desync" into "a short pause". It also can't deadlock: a stalled side keeps sending, and the peer's acknowledgements and inputs are exactly what un-stall it.
+
+**Detail worth knowing:** the local input is only scheduled on ticks that really advance. If a stalled tick also queued an input, the next tick would try to queue a second one for the same frame. The cost is that an input given on a stalled tick is dropped, which is fine because the game keeps passing the player's current buttons.
+
+**Where:** `P2PSession::tick`, `too_far_ahead`, `confirmed_end` in `rewind/src/session/p2p.rs`; tests `stalls_instead_of_predicting_past_max_prediction` and (with 20 ticks of latency) `lag_beyond_max_prediction_stalls_instead_of_desyncing` in `rewind/tests/convergence.rs`.
+
+---
+
+## Checksum exchange and desync detection (R5)
+
+**What:** Every `checksum_interval` (30) frames, each side hashes its game with `RollbackGame::checksum` and sends `PeerMsg::Checksum { frame, hash }`. When both hashes for a frame are in hand and differ, the session emits `Event::Desync { frame }`.
+
+**Why only confirmed frames:** while a frame still rests on a guess about the peer's input, a late real input can roll it back and change the hash. Comparing then would flag a "desync" that is just normal rollback. So a checksum is sent, and compared, only once every input up to and including that frame is real (`frame < min(confirmed_end, current_frame)`). Each frame's hash is recorded as it is simulated, and re-simulation overwrites it, so the stored hash is always from the latest run of that frame.
+
+**What a Desync means:** both machines had identical inputs but different states, so the game is not deterministic (a float, a HashMap iteration, a clock read). It is always a bug, never a network problem. The sync test (R2) is the offline way to catch the same class of bug.
+
+**Limits:** checksums are sent once. A lost one just skips that check, and only the 16 newest unmatched checksums per side are kept so memory stays bounded.
+
+**Where:** `record_checksum`, `exchange_checksums` and the `PeerMsg::Checksum` arm of `receive` in `rewind/src/session/p2p.rs`; tests `a_diverging_simulation_is_reported_as_desync`, `agreeing_peers_report_no_desync_even_with_rollbacks`, `checksum_for_an_unconfirmed_frame_is_not_compared_early`.
+
+---
+
+## The prediction envelope
+
+**What:** A session can only roll back as far as its snapshot ring reaches: `max_prediction + 2` = 10 frames. With 2 frames of input delay, an input that's up to about 10 ticks late can still be absorbed without stalling. The random fake networks keep messages within that envelope; `lag_beyond_max_prediction_stalls_instead_of_desyncing` goes past it with 20 ticks of latency and shows the session stalls instead (see "Stalling when too far ahead").
 
 **Where:** `SnapshotBuffer` capacity in `P2PSession::new`; `P2PSession::deepest_rollback`; the last test in `rewind/tests/convergence.rs`.
 
@@ -692,41 +716,18 @@ Across the 200 runs, about 30,000 frames were re-simulated and over 20,000 messa
 
 ---
 
-## The relay client: a lobby, then a transport adapter
+## The WebSocket transport and the relay (R6)
 
-**What:** Talking to the relay server has two stages.
-1. **Lobby:** `RelayClient` sends `CreateRoom` or `JoinRoom { code }` and reports `RoomCreated`, `MatchStart { player_index, seed }` or `PeerLeft`.
-2. **Match:** `into_match()` turns the same connection into a `RelayTransport`. It wraps each rollback message in `ClientMsg::Relay(bytes)` on the way out, and unwraps `ServerMsg::Relay(bytes)` on the way in.
+**What:** `WebSocketTransport` (`rewind/src/transport/websocket.rs`) is a `Transport` that sends bytes to the relay server over one WebSocket. `send(bytes)` becomes `ClientMsg::Relay(bytes)`; relayed bytes from the other player arrive as `ServerMsg::Relay(bytes)` and come out of `poll`. The session never knows: it saw the same `send`/`poll` with the in-memory and fake transports.
 
-`RelayTransport` *is* a `Transport`, so `P2PSession` uses it without knowing a server exists. This is the **adapter** pattern: something that speaks one interface (the relay envelope) presented as another (rewind's `Transport`).
+**Lobby on the same connection:** the room handshake (`create_room`, `join_room`, then `RoomCreated` / `MatchStart` / `PeerLeft`) travels on the same socket, so the transport has a small second API, `lobby_events()`, for the menu. `pump` reads the socket once and sorts each message into the game stream or the lobby list, so neither side loses the other's messages.
 
-**Two details that matter:**
-- The other player may send inputs the moment they see `MatchStart`, so relay bytes can arrive in the *same* poll as our `MatchStart`. The lobby keeps them and hands them to the transport. Test: `inputs_sent_right_after_match_start_are_not_lost`.
-- `P2PSession` owns the transport, so the game can't ask it "did the peer leave?". Instead the transport sets a shared `PeerLeft` flag (`Rc<Cell<bool>>`) that the game reads.
+**Non-blocking I/O:** a game loop must never wait for the network. `poll` calls `try_recv`, which returns at once with a message or nothing. On desktop that means putting the socket in non-blocking mode after the handshake; a read with nothing there fails with `WouldBlock`, which means "nothing yet", not an error. In the browser the socket is JavaScript's and queues messages for us.
 
-**Where:** `game/src/relay.rs`.
+**Held-back sends:** a browser WebSocket is "connecting" for a moment after `connect`, and sending then throws. The transport keeps outgoing messages in `unsent` and flushes them once `is_open()`.
 
----
+**A trait for the socket:** `ByteSocket` (send, try_recv, is_open) is the only thing `WebSocketTransport` needs from a socket. Desktop and browser each provide one, and the unit tests provide a fake one, so the logic is tested with no network at all.
 
-## Keeping two copies of a protocol in sync
+**Same enums, two crates:** `ClientMsg` / `ServerMsg` are defined in both `server/src/protocol.rs` and `websocket.rs`. bincode encodes an enum variant by its position, so they must stay in the same order. The test `server/tests/rewind_client.rs` runs the real transport against the real server, so any mismatch fails there.
 
-**What:** The game needs `ClientMsg`/`ServerMsg`, but it can't depend on the server crate (that would pull tokio and axum into the browser build). So `relay.rs` has a copy. The test `copies_match_the_server_byte_for_byte` encodes every variant with *both* the game's and the server's types and compares the bytes. Bincode encodes an enum variant by its *position*, so reordering variants silently changes the bytes. Swapping two variants on purpose made all 5 relay tests fail.
-
-**Dev-dependencies** make this possible: `[dev-dependencies]` in `game/Cargo.toml` are compiled only for `cargo test`. The tests can use the server's types and room logic, while the game and its browser build never include them.
-
-**Where:** `game/src/relay.rs` (the enums and the byte test), `game/Cargo.toml`.
-
----
-
-## Testing against the real server logic without sockets
-
-**What:** Ram's `Rooms` (`server/src/rooms.rs`) has no sockets in it: each connection is just an id and a message channel. The test harness `InProcessRelay` does what the WebSocket handler does:
-1. Decode each client's `ClientMsg`.
-2. Call `create_room`, `join_room` or `relay`.
-3. Send back whatever the rooms put in each connection's channel.
-
-So the tests run the **same room code the deployed server runs**: real room codes, real `MatchStart` seeds, real relaying and `PeerLeft`. They're still instant and repeatable.
-
-**Why:** It checks the whole online path except the socket itself: lobby, then match start, then a full rollback match over the relay. When R6 adds the WebSocket, only that last piece is new.
-
-**Where:** the tests module of `game/src/relay.rs` (`InProcessRelay`, `full_online_match_over_the_relay_stays_in_sync`).
+**Where:** `rewind/src/transport/websocket.rs`; end-to-end in `server/tests/rewind_client.rs`.

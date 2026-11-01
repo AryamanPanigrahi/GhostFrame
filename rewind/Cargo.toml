@@ -9,3 +9,13 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 # PeerMsg travels as bincode bytes, the same format as the relay's messages.
 bincode = "1"
+# WebSocket client. quad-net (DESIGN.md section 9) is the one that works in
+# the browser. Its native half is built on mio 0.6, which aborts on current
+# Rust on Windows ("null reference produced"), so native builds use
+# tungstenite instead. See SETUP.md.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+quad-net = { version = "0.1.2", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Plain `ws://` only for now ("handshake" is the HTTP upgrade, no TLS).
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }

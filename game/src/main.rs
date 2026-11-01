@@ -5,10 +5,6 @@ mod input;
 mod menu;
 mod online;
 mod practice;
-// The menu's Create/Join use this once R6's WebSocket transport exists
-// (I1). Until then only its tests run it, against the real room logic.
-#[allow(dead_code)]
-mod relay;
 mod render;
 mod session;
 mod sim;

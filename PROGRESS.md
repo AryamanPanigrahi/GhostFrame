@@ -20,12 +20,12 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
 | R3: `P2PSession` | Aryaman | ✅ Done |
 | R4: fake-network transport + convergence tests | Aryaman | ✅ Done |
-| R5: checksums, desync, stall | Ram | Not started (unblocked: R3 is done) |
-| R6: WebSocket transport | Ram | Not started |
+| R5: checksums, desync, stall | Ram | ✅ Done |
+| R6: WebSocket transport | Ram | ✅ Done (browser end-to-end waits for I2) |
 | S1, S2: relay server | Ram | ✅ Done |
-| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag, relay client tested against the real room logic); real connection needs R5 + R6 |
+| I1–I3: online play, browser, deploy | Together | I1 prep done (`OnlineMatch`, practice vs lag). R5 and R6 are in; next is wiring `WebSocketTransport` into the menu |
 
-**Tests:** 164 tests, all passing (`cargo test --workspace`): 50 in `rewind` (including 4 network convergence tests), 97 in `riposte-game`, 17 in `riposte-server` (6 of them over real WebSockets). fmt and clippy clean.
+**Tests:** 175 tests, all passing (`cargo test --workspace`): 63 in `rewind` (including R5's stall/desync tests and 4 network convergence tests), 92 in `riposte-game`, 20 in `riposte-server` (including R6's end-to-end tests: two `WebSocketTransport`s and two rollback sessions through a real server over real sockets). fmt and clippy clean.
 
 ---
 
@@ -283,33 +283,13 @@ cargo run -p riposte-server
 - two online matches identical every tick without lag (1);
 - practice: worst preset rolls back without crashing, no lag means both sides agree every tick, switching lag mid-match is safe (3).
 
-**What I1 still needs:** R6's WebSocket transport, wiring the menu's Create/Join to the relay client (below), and R5's stall and desync events.
+**What I1 still needs (R5 and R6 are now on `main`):**
+- Wire the menu's Create/Join to `rewind::WebSocketTransport` (connect, `create_room`/`join_room`, show the room code, wait for `MatchStart` in `lobby_events`).
+- Then hand the transport to `OnlineMatch` with that player index and seed.
+- Handle `Event::Stalled` and `Event::Desync` from `tick`.
+- **Gap to solve:** once `P2PSession` owns the transport, the game can no longer read `lobby_events()`, so a `PeerLeft` mid-match goes unnoticed. `P2PSession` doesn't emit `Event::Disconnected` yet.
 
----
-
-## I1 prep, part 2: relay client (Aryaman)
-
-**Gist:**
-- `RelayClient` does the lobby: create or join, then wait for `RoomCreated`, `MatchStart` or `PeerLeft`.
-- After `MatchStart`, `into_match()` turns the connection into a `RelayTransport`. It wraps rollback messages in `ClientMsg::Relay`, unwraps `ServerMsg::Relay`, and sets a `PeerLeft` flag the game can read.
-- It works over any raw `Transport`. R6's WebSocket transport plugs straight in.
-
-**Tested against the server's real room logic, in-process** (`Rooms` from `server/src/rooms.rs`, no sockets):
-- Create, then join with a lowercase code: both players get `MatchStart` with indices 0 and 1 and the same seed.
-- A full 20 s bot-vs-bot `OnlineMatch` over the relay ends identical on both sides.
-- `PeerLeft` mid-match sets the flag.
-- Inputs sent right after `MatchStart` aren't lost.
-
-**Files:** `game/src/relay.rs`.
-- `game/Cargo.toml`: `serde` + `bincode` as dependencies.
-- `riposte-server` + `tokio` (`sync`) as **dev-dependencies**: tests only, never in the game or the browser build, all already in `Cargo.lock`.
-- `mod relay` in `main.rs` is marked `#[allow(dead_code)]` until I1 wires it to the menu.
-
-**Decisions:**
-- The game keeps a copy of the frozen `ClientMsg`/`ServerMsg` (it can't depend on the server crate). A test compares the bytes of every variant with the server's types, and swapping two variants on purpose made all 5 relay tests fail.
-
-**Tests:** 5 new: the byte test plus the four above.
-
+(A separate relay client was written in `game/src/relay.rs` before R6 landed, then dropped unmerged: R6's `WebSocketTransport` already does the lobby and the relay wrapping, and Ram's `server/tests/rewind_client.rs` tests the same path over real sockets.)
 
 ---
 
@@ -420,7 +400,7 @@ cargo test -p riposte-game sync -- --nocapture
 
 ## Open questions
 
-- **One home for `ClientMsg`/`ServerMsg` (for Ram):** right now the server and the game each have a copy, kept in sync by a byte-level test. A cleaner option is to move both enums into `rewind/src/protocol.rs` (game-agnostic, already a dependency of both), with the server importing them. That moves frozen-protocol code between Ram's files, so it needs both of you to agree.
+- **One home for `ClientMsg`/`ServerMsg`:** there are two copies, in `server/src/protocol.rs` and `rewind/src/transport/websocket.rs`. Ram's end-to-end test (`server/tests/rewind_client.rs`) would catch a mismatch, but one shared definition (e.g. in `rewind/src/protocol.rs`, imported by the server) would remove the risk. It moves frozen-protocol code, so it needs both of you to agree.
 
 - **Blocking** isn't in any milestone, so G4 doesn't have it. Suggestion: hold back to block, as a small step before G5.
 - **Round timer:** there's no time-out yet, so a round only ends by KO. Should rounds have one (e.g. 99 s, most health wins)?
@@ -429,7 +409,5 @@ cargo test -p riposte-game sync -- --nocapture
 - **Tuning:** all movement and frame-data numbers are first guesses. Ram's G6 includes frame-data tuning.
 - **Art:** 2D sprites or 3D models? This affects G7 and the WASM build.
 - **Main loop floats:** `main.rs` converts macroquad's `f64` time to integers once. The "floats only in `render/`" rule is read as applying to the sim; say if it should be stricter.
-- **R5 is the last thing before real-network play:** R4 shows the session handles bad networks *within* its envelope, but a real lag spike can always go past it, and without a stall that panics. R4's fake network is ready for testing the stall too: `FakeConfig { latency: 20, .. }` is the case it must turn from a panic into a short pause.
-- **R5 (Ram) builds on R3:** `P2PSession::tick` returns an empty `Vec<Event>` for R5 to fill. `PeerMsg::Checksum` is defined but ignored on receipt, and there's no stall yet. A good place for the stall check is the start of `tick`, comparing `current_frame` with the remote queue's next frame against `Config::max_prediction`. R5 will probably also add `checksum_interval` to `Config`.
 - **`protocol.rs` ownership:** it isn't listed for either of us in CLAUDE.md. R3 created it exactly as DESIGN.md section 6 freezes it; R5 uses its `Checksum` variant.
 - **quad-net in the browser (for Ram, R6):** the JS bundle's quad-net plugin fails to register (`register_plugin is not defined`). R6's WASM spike should start by checking how quad-net expects its JS to be loaded with this macroquad version. Native WebSockets aren't affected.
