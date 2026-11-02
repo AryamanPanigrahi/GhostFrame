@@ -279,7 +279,7 @@ cargo run -p riposte-server
 **Files:** `server/src/web.rs` (new), `app_with_web` in `server/src/lib.rs`, `WEB_DIR` handling in `server/src/main.rs`, `tokio`'s `fs` feature in `server/Cargo.toml`, `server/tests/web.rs`, `web/index.html`, `game/src/netplay.rs`, `Dockerfile`, `.dockerignore`. The server files are Ram's; the change is small and additive, and `app()` behaves exactly as before.
 
 **Still open for I3:**
-- **Desktop `wss://`:** `rewind` links tungstenite without TLS, so desktop can only reach `ws://` servers. Adding it means a TLS feature on tungstenite in `rewind/Cargo.toml` (Ram's R6 file) plus a justified new dependency. Browser players don't need it.
+- ~~**Desktop `wss://`**~~ done (Ram, `net/wss-desktop`): tungstenite's rustls feature with the `ring` backend. Desktop players use `RIPOSTE_SERVER=wss://<host>/ws`.
 - Choose a host, deploy, and replace the `TODO` public link in `README.md`.
 - Free hosts usually sleep idle apps, so the first connection can be slow, and rooms don't survive a restart.
 

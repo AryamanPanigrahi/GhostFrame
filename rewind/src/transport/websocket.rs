@@ -103,10 +103,14 @@ mod native {
         pub fn connect(url: &str) -> Result<NativeSocket, String> {
             let (ws, _response) = tungstenite::connect(url).map_err(|e| e.to_string())?;
             // The handshake needs blocking reads; after it, never block the
-            // game loop waiting for the network.
-            if let MaybeTlsStream::Plain(stream) = ws.get_ref() {
-                stream.set_nonblocking(true).map_err(|e| e.to_string())?;
-            }
+            // game loop waiting for the network. For `wss://` the TCP socket
+            // sits under the TLS layer, which passes `WouldBlock` through.
+            let tcp = match ws.get_ref() {
+                MaybeTlsStream::Plain(stream) => stream,
+                MaybeTlsStream::Rustls(tls) => tls.get_ref(),
+                _ => return Err("unsupported stream type".to_string()),
+            };
+            tcp.set_nonblocking(true).map_err(|e| e.to_string())?;
             Ok(NativeSocket { ws, closed: false })
         }
     }
@@ -236,7 +240,9 @@ pub struct WebSocketTransport<S: ByteSocket = DefaultSocket> {
 }
 
 impl WebSocketTransport {
-    /// Open a WebSocket to the relay, e.g. `ws://localhost:8080/ws`.
+    /// Open a WebSocket to the relay, e.g. `ws://localhost:8080/ws`, or
+    /// `wss://example.com/ws` for a relay behind HTTPS (desktop uses rustls;
+    /// the browser handles TLS itself).
     ///
     /// On native this blocks until the connection is open. In the browser it
     /// returns at once and the socket opens in the background; messages sent
@@ -522,5 +528,18 @@ mod tests {
     fn connecting_to_nothing_is_an_error_not_a_panic() {
         // Port 1 on localhost: nothing listens there.
         assert!(WebSocketTransport::connect("ws://127.0.0.1:1/ws").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn wss_urls_are_supported_on_desktop() {
+        // Without a TLS feature tungstenite rejects `wss://` before even
+        // connecting. With it, the attempt gets as far as the network and
+        // fails only because nothing listens on port 1.
+        let err = match WebSocketTransport::connect("wss://127.0.0.1:1/ws") {
+            Ok(_) => panic!("nothing listens on port 1"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!err.contains("TLS support not compiled in"), "{err}");
     }
 }
