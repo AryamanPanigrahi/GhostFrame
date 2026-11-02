@@ -317,7 +317,7 @@ RIPOSTE_SERVER=wss://<your-app-host>/ws cargo run -p riposte-game
 
 **New build setting for the browser:** `.cargo/config.toml` adds `-C link-arg=--allow-undefined` for the `wasm32-unknown-unknown` target only. The WebSocket code calls JavaScript functions (`ws_connect`, `ws_send`, ...) that only exist once the page's `mq_js_bundle.js` loads the `.wasm`. Without the flag the linker refuses to build. Cargo reads this file automatically, so `./scripts/build-web.sh` needs no changes.
 
-## 12. Hosting the game online (I3 prep)
+## 12. Hosting the game online (I3)
 
 **What:** The relay can also serve the browser build, so **one hosted app is the whole game**: players open its URL, and the page connects back to the same address.
 
@@ -347,7 +347,15 @@ docker run --rm -p 8080:8080 riposte-server
 
 **Desktop players** connect to the same host with `RIPOSTE_SERVER=wss://<your-app-host>/ws` (section 11, step 2c). The relay itself never handles TLS: the host terminates it and forwards plain WebSocket traffic to the app.
 
-**Untested:** the `Dockerfile` itself could not be built in the sandbox (no Docker daemon). Its steps are the same commands run by hand there. If the build fails, the error will point at the step.
+**Tested (Nov 2026):** the image builds with Docker Desktop on Windows (about 120 MB), honours `PORT`, serves the page, the `.wasm` and `/ws`, and two native clients played a full match through it.
+
+**Deploying to Render (free plan):** `render.yaml` in the repo root describes the service, so the setup is a few clicks:
+
+1. Sign up at https://dashboard.render.com with your GitHub account.
+2. **New → Blueprint**, pick this repository, and apply. Render builds the `Dockerfile` (the first build takes several minutes) and gives the app an `https://<name>.onrender.com` address.
+3. Open that address in two browser windows: Create a room in one, Join it in the other.
+
+The free plan sleeps after 15 minutes without traffic; the next visit wakes it in about a minute. Every push to `main` redeploys (`autoDeploy`).
 
 ## 13. Game art (scripts/art)
 
