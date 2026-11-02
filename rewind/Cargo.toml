@@ -17,5 +17,14 @@ bincode = "1"
 quad-net = { version = "0.1.2", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Plain `ws://` only for now ("handshake" is the HTTP upgrade, no TLS).
-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+# "handshake" is the HTTP upgrade. "rustls-tls-webpki-roots" adds `wss://`
+# (TLS) using rustls, a TLS library written in Rust, with Mozilla's list of
+# trusted certificate authorities built in, so there is no OpenSSL to install
+# and nothing read from the system. `ws://` keeps working unchanged.
+tungstenite = { version = "0.29", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+# tungstenite enables rustls with no crypto backend. rustls's default backend
+# (aws-lc-rs) needs CMake and NASM to build, so pick `ring` instead, which
+# builds with the C compiler the Rust toolchain already uses. With exactly one
+# backend enabled, rustls picks it automatically. "tls12" keeps hosts that
+# only offer TLS 1.2 reachable.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
