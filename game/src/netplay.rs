@@ -113,13 +113,23 @@ impl<S: ByteSocket> Lobby<S> {
                 LobbyEvent::PeerLeft => {
                     self.fail("The other player left before the match started.");
                 }
+                LobbyEvent::ConnectionLost => {
+                    // A wrong or full code makes the relay close the
+                    // connection, so while joining this means "no such room".
+                    let reason = match &self.status {
+                        LobbyStatus::Joining { code } => no_room(code),
+                        _ => "Lost the connection to the server.".to_owned(),
+                    };
+                    self.fail(&reason);
+                    return None;
+                }
             }
         }
 
         if let LobbyStatus::Joining { code } = &self.status {
             self.waited_micros += elapsed_micros;
             if self.waited_micros > JOIN_TIMEOUT_MICROS {
-                let reason = format!("No answer for room {code}.\nIt may not exist, or it's full.");
+                let reason = no_room(code);
                 self.fail(&reason);
             }
         }
@@ -151,6 +161,10 @@ impl<S: ByteSocket> Lobby<S> {
     }
 }
 
+fn no_room(code: &str) -> String {
+    format!("No answer for room {code}.\nIt may not exist, or it's full.")
+}
+
 /// A running online match and what the session has reported about it.
 pub struct OnlineScreen<S: ByteSocket> {
     pub online: OnlineMatch<WebSocketTransport<S>>,
@@ -161,6 +175,9 @@ pub struct OnlineScreen<S: ByteSocket> {
     pub desync: Option<Frame>,
     /// The relay said the other player is gone. The match stops.
     pub peer_left: bool,
+    /// Our own connection to the relay closed. The match stops: without it
+    /// the session would stall forever waiting for the other player.
+    pub connection_lost: bool,
 }
 
 impl<S: ByteSocket> OnlineScreen<S> {
@@ -171,13 +188,14 @@ impl<S: ByteSocket> OnlineScreen<S> {
             driver: TickDriver::default(),
             desync: None,
             peer_left: false,
+            connection_lost: false,
         }
     }
 
     /// One render frame: run the ticks that are due with this machine's
     /// input, and collect what the session and the relay report.
     pub fn update(&mut self, elapsed_micros: u64, local_input: Input) {
-        if self.peer_left {
+        if self.peer_left || self.connection_lost {
             return;
         }
         let (ticks, inputs) = self.driver.frame(elapsed_micros, [local_input, 0]);
@@ -193,11 +211,15 @@ impl<S: ByteSocket> OnlineScreen<S> {
                 }
             }
         }
-        // The session owns the transport, so the relay's PeerLeft is read
-        // through it (see `P2PSession::transport_mut`).
-        let left = self.online.transport_mut().lobby_events();
-        if left.contains(&LobbyEvent::PeerLeft) {
-            self.peer_left = true;
+        // The session owns the transport, so the relay's PeerLeft (and a
+        // dropped connection) is read through it (see
+        // `P2PSession::transport_mut`).
+        for event in self.online.transport_mut().lobby_events() {
+            match event {
+                LobbyEvent::PeerLeft => self.peer_left = true,
+                LobbyEvent::ConnectionLost => self.connection_lost = true,
+                _ => {}
+            }
         }
     }
 
@@ -220,6 +242,8 @@ impl<S: ByteSocket> OnlineScreen<S> {
         }
         if self.peer_left {
             lines.push("The other player left. Esc: back to the menu".to_owned());
+        } else if self.connection_lost {
+            lines.push("Lost the connection to the server. Esc: back to the menu".to_owned());
         }
         lines
     }
@@ -249,6 +273,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeSocket {
         incoming: Rc<RefCell<VecDeque<Vec<u8>>>>,
+        closed: Rc<RefCell<bool>>,
     }
 
     impl FakeSocket {
@@ -265,6 +290,9 @@ mod tests {
         }
         fn is_open(&self) -> bool {
             true
+        }
+        fn is_closed(&self) -> bool {
+            *self.closed.borrow()
         }
     }
 
@@ -356,6 +384,52 @@ mod tests {
         relay.deliver(&ServerMsg::PeerLeft);
         screen.update(FRAME, 0);
         assert!(screen.peer_left);
+        let frame = screen.online.game.frame;
+        screen.update(FRAME * 10, 0);
+        assert_eq!(screen.online.game.frame, frame, "a stopped match stays put");
+    }
+
+    #[test]
+    fn a_closed_connection_while_joining_means_no_such_room() {
+        let (transport, relay) = connected();
+        let mut lobby = Lobby::join(transport, "ZZZZ");
+        *relay.closed.borrow_mut() = true;
+        assert!(lobby.update(FRAME).is_none());
+        assert!(matches!(lobby.status, LobbyStatus::Failed { .. }));
+        assert!(lobby.lines()[0].contains("ZZZZ"), "without the 5 s wait");
+    }
+
+    #[test]
+    fn losing_the_relay_while_waiting_fails_the_lobby() {
+        let (transport, relay) = connected();
+        let mut lobby = Lobby::create(transport);
+        relay.deliver(&ServerMsg::RoomCreated {
+            code: "QWER".into(),
+        });
+        *relay.closed.borrow_mut() = true;
+        assert!(lobby.update(FRAME).is_none());
+        assert!(lobby.lines()[0].contains("Lost the connection"));
+    }
+
+    #[test]
+    fn losing_the_relay_mid_match_stops_it_with_a_message() {
+        let (transport, relay) = connected();
+        let mut lobby = Lobby::join(transport, "ABCD");
+        relay.deliver(&ServerMsg::MatchStart {
+            player_index: 1,
+            seed: 7,
+        });
+        let mut screen = lobby.update(FRAME).unwrap();
+        screen.update(FRAME, 0);
+        assert!(!screen.connection_lost);
+
+        *relay.closed.borrow_mut() = true;
+        screen.update(FRAME, 0);
+        assert!(screen.connection_lost);
+        assert!(screen
+            .overlay()
+            .iter()
+            .any(|l| l.contains("Lost the connection")));
         let frame = screen.online.game.frame;
         screen.update(FRAME * 10, 0);
         assert_eq!(screen.online.game.frame, frame, "a stopped match stays put");

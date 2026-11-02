@@ -822,3 +822,13 @@ Online play in the browser failed twice, both times *between* the two halves of 
 **The choice itself** is plain JavaScript in `web/index.html` (`relayUrl`): `?server=` override first, then `ws://<host>:8080/ws` if the page is on some other dev port, else the page's own address. It was tested against fake locations including an HTTPS page.
 
 **Where:** `web/index.html` (`relayUrl`, the plugin), `server_url()` for wasm in `game/src/netplay.rs`. The `unsafe` block there is needed because calling a foreign function is unchecked; its comment says why it's sound.
+
+---
+
+## Noticing that your own connection is gone
+
+**What:** two different "gone" events. `PeerLeft` is the relay telling us *the other player* left. `ConnectionLost` is our own socket closing, so the relay itself is unreachable and can't tell us anything. Without the second, a rollback session just waits: it can't advance more than a few frames past the last input it got, so the game sits in a stall forever, which looks like a hang.
+
+**How it's detected:** a TCP socket finds out it's dead when a read or write fails. If the other end's process dies, its OS sends a reset and the next read fails at once (what the LAN test saw). If a cable or Wi-Fi link silently disappears, nothing arrives at all, and the OS only gives up after its retransmission timeout. A game-level heartbeat (no message from the peer for N seconds) would catch that case sooner; we don't have one yet.
+
+**Where:** `ByteSocket::is_closed` and the end of `WebSocketTransport::pump` in `rewind/src/transport/websocket.rs`; `connection_lost` in `OnlineScreen` and the `ConnectionLost` arm of `Lobby::update` in `game/src/netplay.rs`.
