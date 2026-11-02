@@ -322,8 +322,10 @@ cargo run -p riposte-server
 - the opponent leaving mid-match stops it;
 - peer inputs arriving through the relay are used without guesses.
 
+**Native vs native over the LAN (2026-11-02, Ram's PC):** two copies of the game's own `Lobby` / `OnlineScreen` code, each driven by the bot, connected through the release relay at the PC's LAN address (`ws://192.168.1.71:8080/ws`, not localhost). The relay log showed the room created, the join and the match start; both played a full match in real time to MatchOver at frame 3534 with identical checksums and no desync. Both ran on one PC, so there was no real latency (0 rollbacks, 0 stalls), and the game window, keyboard and a second machine's network were not exercised.
+
 **Still open for I1/I2:**
-- The two-laptop test.
+- The two-laptop test from a truly separate machine.
 - Errors don't say *why* a native connection failed beyond the error text.
 - ~~In the browser the server address is fixed~~ Fixed by I2 below; it was:
 - "WebSocket is already closing" console noise after the other player leaves (harmless).
@@ -480,6 +482,21 @@ cargo test -p riposte-game sync -- --nocapture
 **Tests:** 8 new in `riposte-game` (6 in `anim.rs`: light and heavy reach drawings cover exactly the active ticks, hit timelines match hitstun, rescaled frame index, jump drawings follow the arc, observing never changes the checksum; 2 in `assets.rs`).
 
 **Not done:** sound (macroquad audio is off), block poses and block spark (no blocking yet), timer art is drawn but unused (no round timer).
+
+---
+
+## Fix: telling the player when the relay connection drops (Ram)
+
+**Found in the LAN test above:** stopping the relay mid-match left both desktop games frozen on the fight with the stall counter climbing and no message, forever. `Event::Disconnected` exists in `api.rs` but nothing raises it, and the native socket marked itself closed without telling anyone.
+
+**Gist:**
+- `ByteSocket` gets `is_closed()` (default false, so fakes don't change): native returns its existing `closed` flag; the browser socket reports closed once it has been open and no longer is.
+- `WebSocketTransport` adds one `LobbyEvent::ConnectionLost`, once, after any messages that arrived before the close.
+- In a match, `OnlineScreen` stops and shows "Lost the connection to the server. Esc: back to the menu". In the lobby it fails with the same text, except while joining, where a close means the relay rejected the code, so it shows "No answer for room ..." at once instead of after 5 s.
+
+**Verified live:** same scripted LAN match through a scratch relay that was killed after 10 s. Both games showed the message within about a second and stopped. A silent Wi-Fi drop (no TCP reset) is only noticed when the OS gives up on the socket, which can take much longer.
+
+**Tests:** 4 new (1 in rewind, 3 in the game): the close is reported once and after pending messages; joining then closing means "no such room"; losing the relay while waiting fails the lobby; losing it mid-match stops the match with the message.
 
 ---
 

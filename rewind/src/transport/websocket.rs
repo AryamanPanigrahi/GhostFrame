@@ -29,32 +29,55 @@ pub trait ByteSocket {
     /// False while a browser WebSocket is still connecting. Sending before
     /// that point throws in JavaScript, so we hold messages back.
     fn is_open(&self) -> bool;
+    /// True once a connection that was open has closed or failed. Nothing
+    /// sent after that arrives, so the game must be told. Fakes that never
+    /// close can keep the default.
+    fn is_closed(&self) -> bool {
+        false
+    }
 }
 
 /// The browser socket: JavaScript's `WebSocket`, through quad-net.
 #[cfg(target_arch = "wasm32")]
 mod browser {
+    use std::cell::Cell;
+
     use super::ByteSocket;
 
-    pub struct BrowserSocket(quad_net::web_socket::WebSocket);
+    pub struct BrowserSocket {
+        ws: quad_net::web_socket::WebSocket,
+        /// Seen open at least once. `connected()` is false both while
+        /// connecting and after closing; this tells the two apart.
+        was_open: Cell<bool>,
+    }
 
     impl BrowserSocket {
         pub fn connect(url: &str) -> Result<BrowserSocket, String> {
             quad_net::web_socket::WebSocket::connect(url)
-                .map(BrowserSocket)
+                .map(|ws| BrowserSocket {
+                    ws,
+                    was_open: Cell::new(false),
+                })
                 .map_err(|e| format!("{e:?}"))
         }
     }
 
     impl ByteSocket for BrowserSocket {
         fn send_bytes(&mut self, data: &[u8]) {
-            self.0.send_bytes(data);
+            self.ws.send_bytes(data);
         }
         fn try_recv(&mut self) -> Option<Vec<u8>> {
-            self.0.try_recv()
+            self.ws.try_recv()
         }
         fn is_open(&self) -> bool {
-            self.0.connected()
+            let open = self.ws.connected();
+            if open {
+                self.was_open.set(true);
+            }
+            open
+        }
+        fn is_closed(&self) -> bool {
+            !self.is_open() && self.was_open.get()
         }
     }
 }
@@ -141,6 +164,10 @@ mod native {
         fn is_open(&self) -> bool {
             true
         }
+
+        fn is_closed(&self) -> bool {
+            self.closed
+        }
     }
 }
 
@@ -182,6 +209,9 @@ pub enum LobbyEvent {
     MatchStart { player_index: u8, seed: u64 },
     /// The other player left or disconnected.
     PeerLeft,
+    /// Our own connection to the relay closed (the relay stopped, or the
+    /// network dropped). Reported once; nothing sent afterwards arrives.
+    ConnectionLost,
 }
 
 /// Why a connection could not be opened.
@@ -205,6 +235,8 @@ pub struct WebSocketTransport<S: ByteSocket = DefaultSocket> {
     relayed: Vec<Vec<u8>>,
     /// Room news waiting for `lobby_events`.
     lobby: Vec<LobbyEvent>,
+    /// `ConnectionLost` has been queued, so it isn't queued again.
+    lost: bool,
 }
 
 impl WebSocketTransport {
@@ -234,6 +266,7 @@ impl<S: ByteSocket> WebSocketTransport<S> {
             unsent: Vec::new(),
             relayed: Vec::new(),
             lobby: Vec::new(),
+            lost: false,
         }
     }
 
@@ -296,6 +329,12 @@ impl<S: ByteSocket> WebSocketTransport<S> {
                 ServerMsg::PeerLeft => self.lobby.push(LobbyEvent::PeerLeft),
             }
         }
+        // After the messages that arrived before the close, so a `PeerLeft`
+        // the relay sent first is still seen first.
+        if !self.lost && self.socket.is_closed() {
+            self.lost = true;
+            self.lobby.push(LobbyEvent::ConnectionLost);
+        }
     }
 }
 
@@ -321,6 +360,7 @@ mod tests {
     #[derive(Default)]
     struct FakeState {
         open: bool,
+        closed: bool,
         sent: Vec<Vec<u8>>,
         incoming: VecDeque<Vec<u8>>,
     }
@@ -338,6 +378,9 @@ mod tests {
         }
         fn is_open(&self) -> bool {
             self.0.borrow().open
+        }
+        fn is_closed(&self) -> bool {
+            self.0.borrow().closed
         }
     }
 
@@ -417,6 +460,25 @@ mod tests {
             ]
         );
         assert!(t.lobby_events().is_empty());
+    }
+
+    #[test]
+    fn a_closed_socket_is_reported_once_after_pending_messages() {
+        let socket = open_socket();
+        let mut t = WebSocketTransport::with_socket(socket.clone());
+        assert!(t.lobby_events().is_empty());
+        deliver(&socket, &ServerMsg::PeerLeft);
+        socket.0.borrow_mut().closed = true;
+        assert_eq!(
+            t.lobby_events(),
+            vec![LobbyEvent::PeerLeft, LobbyEvent::ConnectionLost]
+        );
+        assert!(t.lobby_events().is_empty());
+        assert!(t.poll().is_empty());
+        assert!(
+            t.lobby_events().is_empty(),
+            "polling doesn't report it again"
+        );
     }
 
     #[test]

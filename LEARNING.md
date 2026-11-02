@@ -839,3 +839,13 @@ Online play in the browser failed twice, both times *between* the two halves of 
 **Non-blocking still works:** after the handshake we set the *TCP* socket under the TLS layer to non-blocking. When no data is waiting, rustls passes `WouldBlock` up and `try_recv` returns `None` as before. The code reaches the TCP socket through `MaybeTlsStream::Rustls(tls) => tls.get_ref()`.
 
 **Where:** `rewind/Cargo.toml`, `NativeSocket::connect` in `rewind/src/transport/websocket.rs`, and the test `wss_urls_are_supported_on_desktop`. Checked by hand against a public `wss://` echo server (binary frame echoed back) and a self-signed one (refused).
+
+---
+
+## Noticing that your own connection is gone
+
+**What:** two different "gone" events. `PeerLeft` is the relay telling us *the other player* left. `ConnectionLost` is our own socket closing, so the relay itself is unreachable and can't tell us anything. Without the second, a rollback session just waits: it can't advance more than a few frames past the last input it got, so the game sits in a stall forever, which looks like a hang.
+
+**How it's detected:** a TCP socket finds out it's dead when a read or write fails. If the other end's process dies, its OS sends a reset and the next read fails at once (what the LAN test saw). If a cable or Wi-Fi link silently disappears, nothing arrives at all, and the OS only gives up after its retransmission timeout. A game-level heartbeat (no message from the peer for N seconds) would catch that case sooner; we don't have one yet.
+
+**Where:** `ByteSocket::is_closed` and the end of `WebSocketTransport::pump` in `rewind/src/transport/websocket.rs`; `connection_lost` in `OnlineScreen` and the `ConnectionLost` arm of `Lobby::update` in `game/src/netplay.rs`.
