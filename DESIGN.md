@@ -25,6 +25,7 @@ Riposte is a 2-player online fighting game written in Rust. Its multiplayer runs
 ```
 riposte/
 ├── Cargo.toml            # workspace root
+├── README.md             # what it is, how to run it, where to read next
 ├── CLAUDE.md             # instructions for Claude sessions
 ├── DESIGN.md             # this file
 ├── LEARNING.md           # concept → explanation → where it lives in the code
@@ -73,8 +74,8 @@ riposte/
 ├── server/               # WebSocket relay (crate: riposte-server)
 │   └── src/        # main.rs, lib.rs, rooms.rs, protocol.rs, web.rs (serves the browser build when WEB_DIR is set)
 └── docs/
-    ├── frame-walkthrough.md
-    └── exercises.md
+    ├── frame-walkthrough.md  # done
+    └── exercises.md          # done
 ```
 
 ---
@@ -392,4 +393,4 @@ These are produced before credits expire:
 - **LEARNING.md:** every concept (rollback, prediction, fixed-point, determinism, ring buffers, AABB, frame data, async relay…), each explained from first principles with the file/function where it lives.
 - **SETUP.md:** every setup step and command, explained, so the whole thing can be built and run without Claude.
 - **docs/frame-walkthrough.md:** one frame traced end to end: key press → bitmask → rewind → network → peer → rollback → render.
-- **docs/exercises.md:** small changes that prove understanding, e.g. "add a third attack", "change input_delay and observe rollbacks", "introduce a float and watch the sync test catch it".
+- **docs/exercises.md:** small changes that prove understanding, e.g. "add a third attack", "change input_delay and observe rollbacks", "hide state outside `GameState` and watch the sync test catch it". *Correction made while writing it:* a float that is part of the saved state is **not** caught by the sync test (the same binary rounds the same way every time on one machine); the exercise shows that, and why the browser-vs-desktop check and the runtime checksum exchange exist.
