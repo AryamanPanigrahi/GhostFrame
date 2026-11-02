@@ -280,7 +280,7 @@ cargo run -p riposte-server
 
 **Still open for I3:**
 - **Desktop `wss://`:** `rewind` links tungstenite without TLS, so desktop can only reach `ws://` servers. Adding it means a TLS feature on tungstenite in `rewind/Cargo.toml` (Ram's R6 file) plus a justified new dependency. Browser players don't need it.
-- Choose a host, deploy, and put the public link in a README.
+- Choose a host, deploy, and replace the `TODO` public link in `README.md`.
 - Free hosts usually sleep idle apps, so the first connection can be slow, and rooms don't survive a restart.
 
 ---
@@ -480,6 +480,22 @@ cargo test -p riposte-game sync -- --nocapture
 **Tests:** 8 new in `riposte-game` (6 in `anim.rs`: light and heavy reach drawings cover exactly the active ticks, hit timelines match hitstun, rescaled frame index, jump drawings follow the arc, observing never changes the checksum; 2 in `assets.rs`).
 
 **Not done:** sound (macroquad audio is off), block poses and block spark (no blocking yet), timer art is drawn but unused (no round timer).
+
+---
+
+## Learning material (Aryaman)
+
+**Done:** `README.md`, `docs/frame-walkthrough.md` and `docs/exercises.md`, written from the code as it is now. LEARNING.md and SETUP.md are kept current milestone by milestone.
+
+- **Walkthrough:** one light attack traced from the key press to the other player's screen, naming the file and function at every step, plus a worked rollback with numbers.
+- **Exercises:** warm-ups, rollback experiments, determinism, new features, and ten explain-it-aloud questions. **Every "you should see" claim in sections A and C was run and confirmed:**
+  - Walk speed 4→6: all tests pass.
+  - Jump velocity −15→−12: `jump_leaves_floor_and_lands_after_jump_ticks` fails.
+  - Heavy hitstun 20→24: `frame_advantage_on_hit` fails.
+  - A float in `Fighter::step`: the sync test still **passes** (the exercise explains why).
+  - An unhashed new `Fighter` field: compile error in `hash_into`.
+- **Correction to DESIGN.md's suggestion:** "introduce a float and watch the sync test catch it" is wrong for a single machine, since a float in the saved state is deterministic there. The exercise instead hides state *outside* `GameState` (caught) and shows the float case (not caught), with the reason.
+- **Ram's parts:** the walkthrough covers the whole path, but Ram's own LEARNING.md and docs for R1/R2/R5/R6/S1/S2 are his to keep current.
 
 ---
 
