@@ -79,7 +79,8 @@ After the ticks, `render::draw` reads the `GameState` (it never writes to it):
 
 - `Effects::observe` (`render/effects.rs`) notices a health drop and starts the hit flash and screen shake. They count **sim ticks**, so they last the same at any frame rate.
 - `px()` is the one place where integer subpixels become `f32` pixels. `View` scales the 1280×720 logical stage to the window with black bars where needed.
-- Hurtboxes are drawn as the grey boxes, and an active hitbox as a red outline: what you see is exactly what the hit detection uses.
+- `Animator::observe` and `pose` (`render/anim.rs`) pick the fighter's sprite drawing from the state: the light attack's `action_frame` 4 to 6 shows drawing 02, the full-reach punch, so the fist is on screen exactly while the hitbox exists. A hit also spawns a spark there.
+- Holding Tab draws the hurtboxes (green) and an active hitbox (red outline) over the art: those boxes, not the drawing, are what the hit detection uses.
 
 ## A rollback, with numbers
 
