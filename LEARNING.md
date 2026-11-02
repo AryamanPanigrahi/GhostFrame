@@ -516,6 +516,36 @@ It's why DESIGN.md says the game must pass it before any online work is merged (
 
 ---
 
+## Picking sprite frames from sim state
+
+**What:** Each fighter's sprite is a numbered PNG in an animation folder (`fighter/p1/heavy/03.png`). `Animator::pose` turns the sim's state into "which folder, which drawing". Attacks use `action_frame` against a timeline of ticks per drawing (`HEAVY_TIMELINE`); the jump uses the vertical speed (since `vy = JUMP_VELOCITY + GRAVITY * t`, the ticks since takeoff are `(vy - JUMP_VELOCITY) / GRAVITY`); the intro and win poses use the round timer. A few things the sim doesn't store (ticks spent crouching, whether hitstun came from a light or heavy hit, the landing squash) are remembered by the animator itself, counted in sim ticks like `Effects`.
+
+**Why:** Players read the art, the sim reads the boxes, so the two must agree tick for tick: the drawing with the fist at full reach has to be on screen exactly on the attack's active ticks. Deriving the frame from sim fields makes that exact, and keeps everything render-only: the sim never learns which drawing is shown, so art can never change a hit or a checksum. The tests check that the reach drawings line up with `is_active` for every tick.
+
+**Where:** `game/src/render/anim.rs` (`pose_for`, `timeline`, the `*_TIMELINE` constants and their tests); drawn by `draw_fighter` in `game/src/render/mod.rs`.
+
+---
+
+## Embedding assets with a build script
+
+**What:** `game/build.rs` is a Cargo build script: a small Rust program Cargo compiles and runs *before* compiling the game. It lists every PNG and TTF under `game/assets/` and writes a Rust file into Cargo's `OUT_DIR` with one `include_bytes!("…/00.png")` per file. `render/assets.rs` pulls that file in with `include!`, so the image bytes end up inside the executable, and decodes them into textures once at startup.
+
+**Why:** No file loading at runtime means no "assets folder not found" on desktop and no extra downloads to set up in the browser build, and it works the same on both. Because the list is generated, dropping a new frame into an animation folder needs no code change, only a rebuild (`cargo:rerun-if-changed` tells Cargo when to re-run the script). The cost is a bigger binary (under 1 MB of PNGs here).
+
+**Where:** `game/build.rs`, `game/src/render/assets.rs` (`Assets::load`, `image`, `anim`).
+
+---
+
+## Procedural pixel art (scripts/art)
+
+**What:** The fighter is drawn by code from a posed skeleton: each animation frame gives hip position, lean, and where the hands and feet should be. Two-bone inverse kinematics (the law of cosines) finds the elbows and knees, the limbs are filled as thick capsules into a half-resolution "material" map, and a shading pass adds a light top edge, a dark bottom edge, contour lines where a limb overlaps the body, and a 1-pixel outline. Scaling 2x with nearest-neighbour gives the chunky pixel look. Stage, effects, HUD and the font come from the same scripts.
+
+**Why:** Art as code can be regenerated after any change in seconds, is checked against the hitboxes (the reach frames are posed to touch the hitbox edges), and keeps both colour schemes pixel-identical apart from colour, as the checklist requires.
+
+**Where:** `scripts/art/fighter.py` (`two_bone`, `draw_pose`, `shade`, the animation functions), `scripts/art/gen_art.py`, `scripts/art/pixfont.py`.
+
+---
+
 ## Snapshot ring buffer
 
 **What:** A fixed number of slots (`max_prediction + 2`, so 10). The state saved just before frame `f` goes in slot `f % 10`, tagged with `f`. Saving frame 10 overwrites frame 0's slot. Asking for a frame whose slot now holds a different frame returns `None`.

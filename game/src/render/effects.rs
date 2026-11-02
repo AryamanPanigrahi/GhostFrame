@@ -8,6 +8,7 @@
 //! sim ticks (not wall-clock time), so they last the same however fast the
 //! window redraws.
 
+use super::anim::Animator;
 use crate::sim::GameState;
 
 /// Ticks the defender stays tinted after being hit.
@@ -26,11 +27,15 @@ pub struct Effects {
     shake_left: u8,
     shake_total: u8,
     shake_pixels: f32,
+    /// Sprite frames, sparks and the damage bar (render/anim.rs). Lives here
+    /// so it is created and reset with the rest of a match's game feel.
+    pub anim: Animator,
 }
 
 impl Effects {
     /// Call once per draw with the current sim state.
     pub fn observe(&mut self, game: &GameState) {
+        self.anim.observe(game);
         let health = [game.fighters[0].health, game.fighters[1].health];
 
         let ticks_passed = match self.last_frame {

@@ -103,6 +103,8 @@ enum App {
 // window system (and the browser, in WASM) until the next frame is due.
 #[macroquad::main(window_conf)]
 async fn main() {
+    // All art and the font, decoded once (render/assets.rs).
+    let assets = render::assets::Assets::load();
     let mut app = App::Menu(Menu::default());
     let mut last = now_micros();
 
@@ -135,14 +137,14 @@ async fn main() {
                         None => {}
                     }
                 }
-                render::draw_menu(menu);
+                render::draw_menu(menu, &assets);
             }
             App::Local(local) => {
                 if back_pressed() {
                     switch_to = Some(App::Menu(Menu::default()));
                 }
                 local.update(elapsed);
-                render::draw(&local.game, &mut local.effects);
+                render::draw(&local.game, &mut local.effects, &assets);
             }
             App::Practice(practice) => {
                 if back_pressed() {
@@ -152,8 +154,8 @@ async fn main() {
                     practice.set_preset(preset);
                 }
                 practice.update(elapsed, read_either_player());
-                render::draw(&practice.you.game, &mut practice.you.effects);
-                render::draw_overlay(&practice.overlay());
+                render::draw(&practice.you.game, &mut practice.you.effects, &assets);
+                render::draw_overlay(&practice.overlay(), &assets);
             }
             App::Lobby(lobby) => {
                 if back_pressed() {
@@ -161,7 +163,7 @@ async fn main() {
                 } else if let Some(screen) = lobby.update(elapsed) {
                     switch_to = Some(App::Online(Box::new(screen)));
                 }
-                render::draw_text_screen(&lobby.lines());
+                render::draw_text_screen(&lobby.lines(), &assets);
             }
             App::Online(screen) => {
                 if back_pressed() {
@@ -170,8 +172,8 @@ async fn main() {
                     switch_to = Some(App::Menu(Menu::default()));
                 }
                 screen.update(elapsed, read_either_player());
-                render::draw(&screen.online.game, &mut screen.online.effects);
-                render::draw_overlay(&screen.overlay());
+                render::draw(&screen.online.game, &mut screen.online.effects, &assets);
+                render::draw_overlay(&screen.overlay(), &assets);
             }
         }
         if let Some(next) = switch_to {
