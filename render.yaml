@@ -1,0 +1,13 @@
+# Render blueprint (I3): one free web service built from the Dockerfile.
+# It serves the browser build at / and the relay at /ws; Render's HTTPS makes
+# the page use wss:// on its own. Deploy: dashboard.render.com → New →
+# Blueprint → pick this repo (SETUP.md section 12).
+services:
+  - type: web
+    name: ghostframe
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    # With WEB_DIR set, / is the game page, which also proves the server is up.
+    healthCheckPath: /
+    autoDeploy: true
