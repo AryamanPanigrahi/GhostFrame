@@ -822,3 +822,20 @@ Online play in the browser failed twice, both times *between* the two halves of 
 **The choice itself** is plain JavaScript in `web/index.html` (`relayUrl`): `?server=` override first, then `ws://<host>:8080/ws` if the page is on some other dev port, else the page's own address. It was tested against fake locations including an HTTPS page.
 
 **Where:** `web/index.html` (`relayUrl`, the plugin), `server_url()` for wasm in `game/src/netplay.rs`. The `unsafe` block there is needed because calling a foreign function is unchecked; its comment says why it's sound.
+
+---
+
+## TLS for the desktop client (`wss://`)
+
+**What:** `wss://` is a WebSocket inside TLS, the same encryption as `https://`. The desktop transport gets it from tungstenite's `rustls-tls-webpki-roots` feature: when the URL starts with `wss://`, `tungstenite::connect` wraps the TCP socket in a rustls client before the WebSocket handshake. `ws://` URLs skip TLS, so local play is unchanged.
+
+**Why:** hosting platforms only expose HTTPS, so a hosted relay is only reachable at `wss://`. The browser already had TLS for free; desktop did not, and tungstenite rejects `wss://` outright ("TLS support not compiled in") without a TLS feature.
+
+**Three choices behind it:**
+- **rustls, not native-tls.** native-tls uses the operating system's TLS (SChannel, Secure Transport, OpenSSL). On Linux that means installing OpenSSL headers. rustls is plain Rust and behaves the same everywhere.
+- **The `ring` crypto backend.** rustls needs a crypto library underneath. Its default, `aws-lc-rs`, needs CMake and NASM to build; `ring` only needs the C compiler. With one backend enabled, rustls uses it without any setup call in our code.
+- **Built-in root certificates (`webpki-roots`).** TLS trusts a server because its certificate is signed by an authority on a trusted list. We ship Mozilla's list inside the program instead of reading the OS store, so it works identically on every machine. A self-signed certificate is refused (`UnknownIssuer`).
+
+**Non-blocking still works:** after the handshake we set the *TCP* socket under the TLS layer to non-blocking. When no data is waiting, rustls passes `WouldBlock` up and `try_recv` returns `None` as before. The code reaches the TCP socket through `MaybeTlsStream::Rustls(tls) => tls.get_ref()`.
+
+**Where:** `rewind/Cargo.toml`, `NativeSocket::connect` in `rewind/src/transport/websocket.rs`, and the test `wss_urls_are_supported_on_desktop`. Checked by hand against a public `wss://` echo server (binary frame echoed back) and a self-signed one (refused).

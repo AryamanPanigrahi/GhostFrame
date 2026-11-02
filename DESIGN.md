@@ -311,7 +311,8 @@ Reading before writing keeps the result independent of which player is updated f
 |---|---|---|
 | macroquad | game | Window, input, 2D drawing; compiles to WASM easily |
 | quad-net | rewind (ws transport, browser only) | WebSocket client for WASM. Its desktop half aborts on current Rust on Windows (R6), so desktop uses tungstenite |
-| tungstenite | rewind (ws transport, desktop only) | Blocking WebSocket client, switched to non-blocking after the handshake; already in the tree via tokio-tungstenite |
+| tungstenite | rewind (ws transport, desktop only) | Blocking WebSocket client, switched to non-blocking after the handshake; already in the tree via tokio-tungstenite. Feature `rustls-tls-webpki-roots` adds `wss://` |
+| rustls (feature `ring`) | rewind (desktop only) | TLS for `wss://` to an HTTPS host. Pure-Rust TLS, so no OpenSSL; the `ring` backend avoids the CMake/NASM that the default backend needs |
 | serde, bincode | rewind, server | Message serialization |
 | tokio, axum | server | Async runtime + WebSocket server (tokio `fs` feature: serves the web build, `web.rs`) |
 | thiserror / anyhow | libs / binaries | Error handling |
@@ -359,7 +360,7 @@ Ownership is by milestone and file, not by crate.
 **Together**
 - ◐ **I1:** Online native vs native through the relay, tested on two laptops. *Code done (`netplay.rs`); verified browser vs browser through the real relay in the sandbox; the two-laptop test is still to do.*
 - ✅ **I2:** Online in the browser. *The page picks its relay address; verified browser vs browser in the sandbox.*
-- ◐ **I3:** Deploy server + client, public link in README. *Prep done: the relay serves the web build (`WEB_DIR`) and the Dockerfile includes it. A host, the README and desktop `wss://` are still to do.*
+- ◐ **I3:** Deploy server + client, public link in README. *Prep done: the relay serves the web build (`WEB_DIR`) and the Dockerfile includes it. Desktop `wss://` is done. A host and the README are still to do.*
 
 **Dependencies**
 - R3 needs R1 merged first.

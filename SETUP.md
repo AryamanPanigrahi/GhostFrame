@@ -251,12 +251,15 @@ Then open http://localhost:8000 and click the page once so it receives keyboard 
 
 | Crate | Used when | What it is |
 |---|---|---|
-| `tungstenite` (feature `handshake`) | desktop builds | A WebSocket client library. We open the connection with its blocking `connect`, then switch the socket to non-blocking so `poll` never stalls the game loop. Already in the dependency tree through the server's `tokio-tungstenite`. |
+| `tungstenite` (features `handshake`, `rustls-tls-webpki-roots`) | desktop builds | A WebSocket client library. We open the connection with its blocking `connect`, then switch the socket to non-blocking so `poll` never stalls the game loop. Already in the dependency tree through the server's `tokio-tungstenite`. The second feature adds `wss://`. |
+| `rustls` (features `ring`, `std`, `tls12`) | desktop builds | The TLS library behind `wss://`, written in Rust, so there is no OpenSSL to install. Its default crypto backend (`aws-lc-rs`) needs CMake and NASM to build; `ring` only needs the C compiler Rust already uses. Trusted certificate authorities are Mozilla's list, built into the program (`webpki-roots`). |
 | `quad-net` (listed in DESIGN.md section 9) | `wasm32` (browser) builds | Wraps the browser's own `WebSocket` object, called from Rust through a small JavaScript file. |
 
 **Why two:** DESIGN.md planned quad-net for both. Its desktop half is built on an old network library (`mio 0.6`) that aborts the whole program on current Rust on Windows ("null reference produced"), even for a successful connection. So desktop uses tungstenite, and quad-net is kept only for the browser, where it is the part that matters.
 
-Nothing to install for the desktop build. For the browser build see section 9; the one extra step is below.
+Nothing to install for the desktop build beyond a C compiler, which `ring` uses for its crypto code. Any working Rust setup already has one (MSVC Build Tools, MinGW gcc for the gnu toolchain, Xcode command line tools, or gcc/clang on Linux). For the browser build see section 9; the one extra step is below.
+
+**`ws://` and `wss://`:** the desktop game takes either. `ws://` is plain and fine for one machine or a home network. `wss://` is WebSocket over TLS, which an HTTPS host requires (section 12). The browser handles its own TLS, so none of this is in the browser build.
 
 **The browser JavaScript fix:** `web/mq_js_bundle.js` is macroquad's JS glue, and it contains quad-net's JavaScript. That code does `register_plugin = function ...` without declaring the variable, which is an error in the strict mode the bundle runs in, so the plugin never registered. We changed that one spot in our copy to `var register_plugin; register_plugin = function ...`. **If you replace `mq_js_bundle.js` with a new macroquad version, redo this edit**, then confirm in the browser console (`plugins.map(p => p.name)` should include `"quad_net"`).
 
@@ -302,6 +305,12 @@ In PowerShell:
 $env:RIPOSTE_SERVER = "ws://192.168.1.20:8080/ws"; cargo run -p riposte-game
 ```
 
+**Step 2c: a hosted relay** (section 12): use `wss://` and no port, since the host serves HTTPS on 443:
+
+```bash
+RIPOSTE_SERVER=wss://<your-app-host>/ws cargo run -p riposte-game
+```
+
 **Browser:** build and serve `web/` (section 9) and open the page in two browser windows. The page now picks the relay address itself (I2): if served by something other than the relay on another port (e.g. `python3 -m http.server 8000`) it uses `ws://<same host>:8080/ws`; if served by the relay itself or any other address it uses that address (`wss://` when the page is `https://`). Add `?server=ws://192.168.1.20:8080/ws` to the page URL to point at any relay.
 
 **What you'll see:** an overlay with which player you are, how many frames were rolled back, and how many ticks were stalled. A **DESYNC** line would mean the two games differ, which is a bug to report. When the other player leaves, the match stops with a message.
@@ -336,7 +345,7 @@ docker run --rm -p 8080:8080 riposte-server
 
 **On a host:** any platform that builds a Dockerfile, gives the app an HTTPS address, and passes the port in `PORT` will do. Point it at this repo; no other settings are needed (`PORT` and `WEB_DIR` are handled by the image). The platform's HTTPS makes the page use `wss://` automatically. The platform choice and account are yours (I3).
 
-**Not yet done:** the desktop game only speaks plain `ws://`, so desktop players can't connect to an HTTPS-only host; they would need a TLS feature in rewind (see CLAUDE.md handoff notes). Browser players are unaffected.
+**Desktop players** connect to the same host with `RIPOSTE_SERVER=wss://<your-app-host>/ws` (section 11, step 2c). The relay itself never handles TLS: the host terminates it and forwards plain WebSocket traffic to the app.
 
 **Untested:** the `Dockerfile` itself could not be built in the sandbox (no Docker daemon). Its steps are the same commands run by hand there. If the build fails, the error will point at the step.
 
