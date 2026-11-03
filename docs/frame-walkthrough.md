@@ -61,7 +61,7 @@ Our `RIGHT | LIGHT` arrives as `inputs[0]`. In this order:
 2. `pressed = inputs & !last_tick_inputs`. Attacks start on a **fresh press**, not a hold.
 3. `Fighter::step` for each fighter: timers first, then, if the fighter is actionable, `ground_control`. `LIGHT` pressed → `start_attack(Action::Light)`: the fighter is rooted and `action_frame` starts counting.
 4. During the attack's **active frames** (4, 5, 6 for the light) the hitbox exists. `check_hit` tests it against the opponent's hurtbox (`Rect::overlaps`). Both players' hits are checked **before** either is applied, so simultaneous hits trade.
-5. On a hit, `take_hit`: 50 damage, 15 ticks of hitstun, knockback of 3 px/tick away from the attacker.
+5. On a hit, the attacker's streak is updated (`register_hit`: punches and kicks landed, and a 1.5 s timer), then the defender's `take_hit` runs: 50 damage, 15 ticks of hitstun, knockback of 3 px/tick away from the attacker, and the defender's own streak ends. (Three punches in a row would have unlocked the dynamite punch for the *next* press; see `sim/combo.rs`.)
 6. KO check, round timer, `frame += 1`, and the inputs are stored for the next tick's "just pressed" test.
 
 All positions and speeds are integers (256 subpixels per pixel), so the result is the same on every machine.

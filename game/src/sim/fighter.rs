@@ -2,8 +2,11 @@
 //! and the action state machine (attacks, hitstun). All positions and speeds
 //! are integer subpixels.
 
-use super::attack::{Attack, HEAVY_ATTACK, LIGHT_ATTACK};
+use super::attack::{
+    Attack, HitEffect, DYNAMITE_ATTACK, HEAVY_ATTACK, LIGHT_ATTACK, NADO_ATTACK, SUPER_KICK_ATTACK,
+};
 use super::checksum::Fnv1a;
+use super::combo::{earned, Special, STREAK_WINDOW};
 use super::rect::Rect;
 use super::{is_held, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 
@@ -38,6 +41,16 @@ pub const MAX_HEALTH: i16 = 1000;
 /// How much knockback speed is lost per tick of hitstun (subpixels/tick).
 pub const KNOCKBACK_FRICTION: i32 = 64;
 
+/// Super kick launch: upward speed at the hit. With gravity 0.75 px/tick^2 this
+/// would rise about 450 px, more than the stage allows, so the ceiling stops
+/// the defender with their head at the top of the screen.
+pub const LAUNCH_VELOCITY: i32 = -26 * SUBPIXELS;
+
+/// Nado pull: how far in front of the attacker the defender ends up, and how
+/// fast they travel there.
+pub const PULL_GAP: i32 = 100 * SUBPIXELS;
+pub const PULL_SPEED: i32 = 28 * SUBPIXELS;
+
 /// What the fighter is doing. Only Idle, Walk and Crouch accept new input;
 /// every other action has to finish (or be interrupted by a hit) first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +64,10 @@ pub enum Action {
     Hitstun,
     /// KO'd: down for the rest of the round, no input.
     Knockdown,
+    /// The three special moves, unlocked by hit streaks (combo.rs).
+    Dynamite,
+    SuperKick,
+    Nado,
 }
 
 impl Action {
@@ -66,6 +83,9 @@ impl Action {
             Action::Heavy => 5,
             Action::Hitstun => 6,
             Action::Knockdown => 7,
+            Action::Dynamite => 8,
+            Action::SuperKick => 9,
+            Action::Nado => 10,
         }
     }
 }
@@ -89,6 +109,14 @@ pub struct Fighter {
     /// The current attack already hit, so its remaining active frames
     /// mustn't hit again: one swing, one hit.
     pub attack_connected: bool,
+    /// Normal hits landed in the current streak (combo.rs): Light ones...
+    pub punches: u8,
+    /// ...and Heavy ones.
+    pub kicks: u8,
+    /// Ticks until the streak runs out; 0 means there is no streak.
+    pub streak_timer: u16,
+    /// Where a nado is dragging this fighter to, while it lasts.
+    pub pull_target: Option<i32>,
 }
 
 impl Fighter {
@@ -104,7 +132,37 @@ impl Fighter {
             hitstun: 0,
             health: MAX_HEALTH,
             attack_connected: false,
+            punches: 0,
+            kicks: 0,
+            streak_timer: 0,
+            pull_target: None,
         }
+    }
+
+    /// The special this fighter's streak has earned, if it hasn't run out.
+    pub fn ready_special(&self) -> Option<Special> {
+        if self.streak_timer > 0 {
+            earned(self.punches, self.kicks)
+        } else {
+            None
+        }
+    }
+
+    /// Called when this fighter's normal attack lands: add it to the streak
+    /// and restart the timer. Special moves don't count towards a streak.
+    pub fn register_hit(&mut self) {
+        match self.action {
+            Action::Light => self.punches = self.punches.saturating_add(1),
+            Action::Heavy => self.kicks = self.kicks.saturating_add(1),
+            _ => return,
+        }
+        self.streak_timer = STREAK_WINDOW;
+    }
+
+    fn end_streak(&mut self) {
+        self.punches = 0;
+        self.kicks = 0;
+        self.streak_timer = 0;
     }
 
     /// Based on position, not action: a fighter hit out of a jump is in
@@ -124,6 +182,9 @@ impl Fighter {
         match self.action {
             Action::Light => Some(LIGHT_ATTACK),
             Action::Heavy => Some(HEAVY_ATTACK),
+            Action::Dynamite => Some(DYNAMITE_ATTACK),
+            Action::SuperKick => Some(SUPER_KICK_ATTACK),
+            Action::Nado => Some(NADO_ATTACK),
             _ => None,
         }
     }
@@ -186,6 +247,13 @@ impl Fighter {
 
         self.x += self.vx;
         self.y += self.vy;
+        // The ceiling: a launched fighter stops with their head at the top of
+        // the stage instead of leaving it.
+        let ceiling = self.height();
+        if self.y < ceiling {
+            self.y = ceiling;
+            self.vy = self.vy.max(0);
+        }
         if self.is_airborne() {
             self.vy += GRAVITY;
         }
@@ -205,6 +273,13 @@ impl Fighter {
     /// Advance attack and hitstun timers. Either one ending makes the fighter
     /// Idle, and so actionable again on this same tick.
     fn tick_action(&mut self) {
+        if self.streak_timer > 0 {
+            self.streak_timer -= 1;
+            if self.streak_timer == 0 {
+                self.end_streak();
+            }
+        }
+
         if let Some(attack) = self.current_attack() {
             self.action_frame += 1;
             if self.action_frame >= attack.total() {
@@ -214,10 +289,14 @@ impl Fighter {
             self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION);
         } else if self.action == Action::Hitstun {
             self.hitstun -= 1;
-            self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION);
+            match self.pull_target {
+                Some(target) => self.pull_towards(target),
+                None => self.vx = toward_zero(self.vx, KNOCKBACK_FRICTION),
+            }
             if self.hitstun == 0 {
                 self.action = Action::Idle;
                 self.vx = 0;
+                self.pull_target = None;
             }
         }
     }
@@ -225,11 +304,11 @@ impl Fighter {
     fn ground_control(&mut self, held: Input, pressed: Input) {
         // Attacks beat movement: pressing LIGHT while walking attacks.
         if is_held(pressed, LIGHT) {
-            self.start_attack(Action::Light);
+            self.start_attack(self.attack_for(false));
             return;
         }
         if is_held(pressed, HEAVY) {
-            self.start_attack(Action::Heavy);
+            self.start_attack(self.attack_for(true));
             return;
         }
 
@@ -255,21 +334,62 @@ impl Fighter {
         }
     }
 
+    /// What a Light or Heavy press does right now: the special the streak has
+    /// earned if this button performs it, otherwise the normal attack.
+    fn attack_for(&self, heavy: bool) -> Action {
+        match (self.ready_special(), heavy) {
+            (Some(Special::Nado), _) => Action::Nado,
+            (Some(Special::DynamitePunch), false) => Action::Dynamite,
+            (Some(Special::SuperKick), true) => Action::SuperKick,
+            (_, false) => Action::Light,
+            (_, true) => Action::Heavy,
+        }
+    }
+
     /// Attacks root the fighter in place for their whole duration.
     fn start_attack(&mut self, action: Action) {
+        // Performing a special uses the streak up, whether or not it hits.
+        if matches!(action, Action::Dynamite | Action::SuperKick | Action::Nado) {
+            self.end_streak();
+        }
         self.action = action;
         self.action_frame = 0;
         self.attack_connected = false;
         self.vx = 0;
     }
 
-    /// Called when `attack` from an attacker facing `from_facing` connects.
-    /// Interrupts whatever this fighter was doing, including its own attack.
-    pub fn take_hit(&mut self, attack: Attack, from_facing: i8) {
+    /// Called when `attack` from an attacker standing at `attacker_x` facing
+    /// `from_facing` connects. Interrupts whatever this fighter was doing,
+    /// including its own attack, and breaks its own streak.
+    pub fn take_hit(&mut self, attack: Attack, from_facing: i8, attacker_x: i32) {
         self.health = (self.health - attack.damage).max(0);
         self.action = Action::Hitstun;
         self.hitstun = attack.hitstun;
-        self.vx = from_facing as i32 * attack.knockback;
+        self.end_streak();
+        self.pull_target = None;
+        match attack.effect {
+            HitEffect::Push => self.vx = from_facing as i32 * attack.knockback,
+            HitEffect::Launch => {
+                self.vx = 0;
+                self.vy = LAUNCH_VELOCITY;
+            }
+            HitEffect::Pull => {
+                self.vx = 0;
+                // Just in front of the attacker, but never inside a wall.
+                let half = FIGHTER_WIDTH / 2;
+                let target = attacker_x + from_facing as i32 * PULL_GAP;
+                self.pull_target = Some(target.clamp(half, STAGE_WIDTH - half));
+            }
+        }
+    }
+
+    /// One tick of a nado pull: move towards `target`, arriving exactly.
+    fn pull_towards(&mut self, target: i32) {
+        self.x += (target - self.x).clamp(-PULL_SPEED, PULL_SPEED);
+        self.vx = 0;
+        if self.x == target {
+            self.pull_target = None;
+        }
     }
 
     /// Health reached 0. Keeps any knockback slide; stays down until the
@@ -277,6 +397,7 @@ impl Fighter {
     pub fn knock_down(&mut self) {
         self.action = Action::Knockdown;
         self.hitstun = 0;
+        self.pull_target = None;
     }
 
     /// Feed every field into the hash. The destructuring `let` lists all
@@ -294,6 +415,10 @@ impl Fighter {
             hitstun,
             health,
             attack_connected,
+            punches,
+            kicks,
+            streak_timer,
+            pull_target,
         } = *self;
         h.write_i32(x);
         h.write_i32(y);
@@ -305,6 +430,11 @@ impl Fighter {
         h.write_u16(hitstun);
         h.write_i16(health);
         h.write_bool(attack_connected);
+        h.write_u8(punches);
+        h.write_u8(kicks);
+        h.write_u16(streak_timer);
+        h.write_bool(pull_target.is_some());
+        h.write_i32(pull_target.unwrap_or(0));
     }
 
     fn land(&mut self) {
@@ -499,7 +629,7 @@ mod tests {
     #[test]
     fn hitstun_blocks_input_then_ends() {
         let mut f = Fighter::new(MID, -1);
-        f.take_hit(LIGHT_ATTACK, 1);
+        f.take_hit(LIGHT_ATTACK, 1, 0);
         assert_eq!(f.health, MAX_HEALTH - LIGHT_ATTACK.damage);
         for _ in 1..LIGHT_ATTACK.hitstun {
             f.step(LEFT, LIGHT);
@@ -512,7 +642,7 @@ mod tests {
     #[test]
     fn knockback_slows_down_during_hitstun() {
         let mut f = Fighter::new(MID, -1);
-        f.take_hit(LIGHT_ATTACK, 1);
+        f.take_hit(LIGHT_ATTACK, 1, 0);
         let mut last_vx = f.vx;
         assert!(last_vx > 0);
         for _ in 1..LIGHT_ATTACK.hitstun {
@@ -527,7 +657,7 @@ mod tests {
     fn hit_in_the_air_still_falls() {
         let mut f = Fighter::new(MID, 1);
         f.step(UP, 0);
-        f.take_hit(LIGHT_ATTACK, -1);
+        f.take_hit(LIGHT_ATTACK, -1, 0);
         for _ in 0..60 {
             f.step(0, 0);
         }
@@ -539,7 +669,7 @@ mod tests {
     fn health_never_goes_below_zero() {
         let mut f = Fighter::new(MID, 1);
         f.health = 10;
-        f.take_hit(LIGHT_ATTACK, 1);
+        f.take_hit(LIGHT_ATTACK, 1, 0);
         assert_eq!(f.health, 0);
     }
 
@@ -552,5 +682,64 @@ mod tests {
         assert_eq!(f.action, Action::Knockdown);
         assert_eq!(f.facing, 1);
         assert_eq!(f.x, MID);
+    }
+
+    use crate::sim::attack::{NADO_ATTACK, SUPER_KICK_ATTACK};
+
+    #[test]
+    fn launch_stops_at_the_ceiling_and_comes_back_down() {
+        let mut f = Fighter::new(MID, -1);
+        f.take_hit(SUPER_KICK_ATTACK, 1, 0);
+        let mut highest = f.y;
+        for _ in 0..SUPER_KICK_ATTACK.hitstun {
+            f.step(0, 0);
+            highest = highest.min(f.y);
+            assert_eq!(f.x, MID);
+        }
+        assert_eq!(highest, STAND_HEIGHT);
+        assert_eq!((f.y, f.action), (FLOOR_Y, Action::Idle));
+    }
+
+    #[test]
+    fn pull_arrives_exactly_without_overshooting() {
+        let mut f = Fighter::new(1000 * SUBPIXELS, -1);
+        f.take_hit(NADO_ATTACK, 1, 400 * SUBPIXELS); // target: 500 px
+        for _ in 0..NADO_ATTACK.hitstun {
+            let before = f.x;
+            f.step(0, 0);
+            assert!(
+                f.x <= before && f.x >= 500 * SUBPIXELS,
+                "never passes the target"
+            );
+        }
+        assert_eq!(f.x, 500 * SUBPIXELS);
+        assert_eq!(f.pull_target, None);
+    }
+
+    #[test]
+    fn a_new_hit_or_a_knockdown_cancels_a_pull() {
+        let mut f = Fighter::new(1000 * SUBPIXELS, -1);
+        f.take_hit(NADO_ATTACK, 1, 400 * SUBPIXELS);
+        f.step(0, 0);
+        assert!(f.pull_target.is_some());
+        f.take_hit(LIGHT_ATTACK, 1, 0);
+        assert_eq!(f.pull_target, None);
+
+        f.take_hit(NADO_ATTACK, 1, 400 * SUBPIXELS);
+        f.knock_down();
+        assert_eq!(f.pull_target, None);
+    }
+
+    #[test]
+    fn landing_a_normal_hit_builds_the_streak_but_a_special_does_not() {
+        let mut f = Fighter::new(MID, 1);
+        f.action = Action::Light;
+        f.register_hit();
+        f.action = Action::Heavy;
+        f.register_hit();
+        assert_eq!((f.punches, f.kicks, f.streak_timer), (1, 1, STREAK_WINDOW));
+        f.action = Action::Dynamite;
+        f.register_hit();
+        assert_eq!((f.punches, f.kicks), (1, 1));
     }
 }

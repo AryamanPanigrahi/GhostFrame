@@ -4,6 +4,17 @@
 use super::fighter::SUBPIXELS;
 use super::rect::Rect;
 
+/// What a hit does to the defender besides damage and stun.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HitEffect {
+    /// Pushed away horizontally at `knockback` speed.
+    Push,
+    /// Sent straight up (the super kick).
+    Launch,
+    /// Dragged across the stage to just in front of the attacker (the nado).
+    Pull,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attack {
     /// Ticks before the hitbox appears. The attacker is committed but harmless.
@@ -20,6 +31,7 @@ pub struct Attack {
     /// Defender's horizontal speed (subpixels/tick) right after the hit,
     /// pushing them away from the attacker. Slows down during hitstun.
     pub knockback: i32,
+    pub effect: HitEffect,
 
     /// Hitbox relative to the attacker's feet: `reach_*` is measured forward
     /// (in the direction they face), `height_*` upward from the floor.
@@ -38,6 +50,7 @@ pub const LIGHT_ATTACK: Attack = Attack {
     damage: 50,
     hitstun: 15,
     knockback: 3 * SUBPIXELS,
+    effect: HitEffect::Push,
     reach_near: 30 * SUBPIXELS,
     reach_far: 110 * SUBPIXELS,
     height_low: 130 * SUBPIXELS,
@@ -53,10 +66,63 @@ pub const HEAVY_ATTACK: Attack = Attack {
     damage: 120,
     hitstun: 20,
     knockback: 6 * SUBPIXELS,
+    effect: HitEffect::Push,
     reach_near: 30 * SUBPIXELS,
     reach_far: 140 * SUBPIXELS,
     height_low: 60 * SUBPIXELS,
     height_high: 110 * SUBPIXELS,
+};
+
+// The special moves (see combo.rs). Frame data is a first guess, like the
+// normal attacks: every number here is meant to be tuned by playing.
+
+/// Dynamite punch: blasts the defender across the stage. Hits mid, so it
+/// reaches crouching opponents.
+pub const DYNAMITE_ATTACK: Attack = Attack {
+    startup: 14,
+    active: 4,
+    recovery: 28,
+    damage: 150,
+    hitstun: 40,
+    knockback: 16 * SUBPIXELS,
+    effect: HitEffect::Push,
+    reach_near: 30 * SUBPIXELS,
+    reach_far: 150 * SUBPIXELS,
+    height_low: 60 * SUBPIXELS,
+    height_high: 150 * SUBPIXELS,
+};
+
+/// Super kick: a low kick that launches the defender straight up. The long
+/// hitstun keeps them helpless until they have landed.
+pub const SUPER_KICK_ATTACK: Attack = Attack {
+    startup: 16,
+    active: 4,
+    recovery: 30,
+    damage: 200,
+    hitstun: 80,
+    knockback: 0,
+    effect: HitEffect::Launch,
+    reach_near: 30 * SUBPIXELS,
+    reach_far: 140 * SUBPIXELS,
+    height_low: 0,
+    height_high: 120 * SUBPIXELS,
+};
+
+/// Nado: the hitbox reaches across the whole stage in front of the attacker,
+/// and a hit drags the defender in. Little damage; the point is the pull.
+/// Tall enough that jumping doesn't avoid it.
+pub const NADO_ATTACK: Attack = Attack {
+    startup: 18,
+    active: 3,
+    recovery: 22,
+    damage: 60,
+    hitstun: 50,
+    knockback: 0,
+    effect: HitEffect::Pull,
+    reach_near: 0,
+    reach_far: 1280 * SUBPIXELS,
+    height_low: 0,
+    height_high: 240 * SUBPIXELS,
 };
 
 impl Attack {

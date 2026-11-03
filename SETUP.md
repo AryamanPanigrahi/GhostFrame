@@ -137,10 +137,20 @@ The first build downloads and compiles macroquad and takes a minute; later build
 
 Controls for local 2-player:
 
-| | Move | Jump | Crouch | Light | Heavy |
+| | Move | Jump | Crouch | Punch (light) | Kick (heavy) |
 |---|---|---|---|---|---|
 | P1 | A / D | W | S | F | G |
 | P2 | ← / → | ↑ | ↓ | K | L |
+
+Special moves (hit streaks):
+
+| Streak (hits landed in a row) | You earn | Perform it with | What it does |
+|---|---|---|---|
+| 3 punches | **Dynamite punch** | punch | Big damage, and blasts the opponent far backwards |
+| 4 kicks | **Super kick** | kick | Big damage, and launches the opponent straight up to the top of the screen |
+| 3 hits that include at least one punch and one kick | **Nado** | punch or kick | Pulls the opponent to you from anywhere on the stage |
+
+A *punch* is a light attack and a *kick* is a heavy attack. Land the hits within 1.5 seconds of each other and without being hit yourself. Earning a special doesn't use it up: it waits for your next press (a prompt shows under your health bar) until the streak runs out. Performing it, even if it misses, uses the streak up.
 
 Before committing, check formatting and lints:
 

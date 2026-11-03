@@ -59,6 +59,19 @@ mod tests {
         round_overs: u32,
         match_overs: u32,
         jumps: u32,
+        /// Special moves performed (combo.rs).
+        dynamites: u32,
+        super_kicks: u32,
+        nados: u32,
+    }
+
+    impl Coverage {
+        fn add(&mut self, other: &Coverage) {
+            self.hits += other.hits;
+            self.dynamites += other.dynamites;
+            self.super_kicks += other.super_kicks;
+            self.nados += other.nados;
+        }
     }
 
     /// Play `frames` frames of bot-vs-bot under the sync test. Panics with
@@ -89,6 +102,16 @@ mod tests {
                 if now.action == Action::Jump && was.action != Action::Jump {
                     cov.jumps += 1;
                 }
+                let started = |action| now.action == action && was.action != action;
+                if started(Action::Dynamite) {
+                    cov.dynamites += 1;
+                }
+                if started(Action::SuperKick) {
+                    cov.super_kicks += 1;
+                }
+                if started(Action::Nado) {
+                    cov.nados += 1;
+                }
             }
             let entered = |phase_now: bool, phase_was: bool| phase_now && !phase_was;
             let is_round_over = |s: &GameState| matches!(s.round.phase, Phase::RoundOver { .. });
@@ -108,8 +131,10 @@ mod tests {
     fn riposte_passes_the_sync_test() {
         // Several seeds: different bot behaviour and a different PRNG seed in
         // the state. 6000 frames is 100 s of play per seed.
+        let mut total = Coverage::default();
         for seed in [1, 2, 3, 42] {
             let cov = sync_test(seed, 6000);
+            total.add(&cov);
             // Visible with `cargo test -p riposte-game sync -- --nocapture`.
             println!("seed {seed}: {cov:?}");
             assert!(cov.hits > 10, "seed {seed}: too few hits: {cov:?}");
@@ -118,6 +143,9 @@ mod tests {
             assert!(cov.round_overs >= 2, "seed {seed}: {cov:?}");
             assert!(cov.match_overs >= 1, "seed {seed}: no full match: {cov:?}");
         }
+        // Random bots only occasionally earn a special; the test below plays
+        // them on purpose.
+        println!("specials over all seeds: {total:?}");
     }
 
     #[test]
@@ -203,5 +231,84 @@ mod tests {
             // and reset to full health just before the run stops.
             assert!(hits_seen > 0, "seed {seed}: nobody was ever hit");
         }
+    }
+
+    /// A scripted attacker that keeps performing the three special moves in
+    /// turn against a defender who just stands there: three punches then a
+    /// dynamite punch, four kicks then a super kick, two punches and a kick
+    /// then a nado. Random bots rarely get that far, so this is what makes
+    /// sure the streak counters, the launch and the pull are replayed from
+    /// snapshots by the sync test.
+    struct ComboPlayer {
+        phase: usize,
+        was_special: bool,
+    }
+
+    impl ComboPlayer {
+        fn input(&mut self, game: &GameState) -> Input {
+            let me = &game.fighters[0];
+            let is_special = matches!(
+                me.action,
+                Action::Dynamite | Action::SuperKick | Action::Nado
+            );
+            if is_special && !self.was_special {
+                self.phase += 1; // on to the next special
+            }
+            self.was_special = is_special;
+
+            let gap = (game.fighters[1].x - me.x) / crate::sim::fighter::SUBPIXELS;
+            if !me.is_actionable() {
+                return 0;
+            }
+            // Release the buttons first: attacks start on a fresh press.
+            if game.inputs[0] & (LIGHT | HEAVY) != 0 {
+                return 0;
+            }
+            if gap > 100 {
+                return RIGHT;
+            }
+            match me.ready_special() {
+                Some(crate::sim::combo::Special::SuperKick) => HEAVY,
+                Some(_) => LIGHT,
+                None => match self.phase % 3 {
+                    0 => LIGHT,
+                    1 => HEAVY,
+                    _ if me.punches < 2 => LIGHT,
+                    _ => HEAVY,
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn the_special_moves_pass_the_sync_test() {
+        let mut game = GameState::new(5);
+        let mut session: SyncTestSession<GameState> = SyncTestSession::new(CHECK_DISTANCE);
+        let mut player = ComboPlayer {
+            phase: 0,
+            was_special: false,
+        };
+        let mut cov = Coverage::default();
+        let mut last = game.clone();
+
+        for _ in 0..4000 {
+            session.add_local_input(0, player.input(&game));
+            session.add_local_input(1, 0);
+            if let Err(e) = session.tick(&mut game) {
+                panic!("{e}");
+            }
+            for p in 0..2 {
+                let (was, now) = (&last.fighters[p], &game.fighters[p]);
+                let started = |action| now.action == action && was.action != action;
+                cov.dynamites += started(Action::Dynamite) as u32;
+                cov.super_kicks += started(Action::SuperKick) as u32;
+                cov.nados += started(Action::Nado) as u32;
+            }
+            last = game.clone();
+        }
+        println!("scripted specials: {cov:?}");
+        assert!(cov.dynamites >= 2, "{cov:?}");
+        assert!(cov.super_kicks >= 2, "{cov:?}");
+        assert!(cov.nados >= 2, "{cov:?}");
     }
 }

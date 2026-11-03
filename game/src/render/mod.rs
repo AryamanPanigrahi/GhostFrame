@@ -9,7 +9,8 @@
 //! boxes are what the hit detection uses.
 
 use crate::menu::{Menu, Screen, MAIN_ITEMS, ROOM_CODE_LEN};
-use crate::sim::fighter::{Fighter, FLOOR_Y, MAX_HEALTH, SUBPIXELS};
+use crate::sim::combo::Special;
+use crate::sim::fighter::{Action, Fighter, FLOOR_Y, MAX_HEALTH, SUBPIXELS};
 use crate::sim::rect::Rect;
 use crate::sim::round::{Phase, Round, MATCH_OVER_TICKS, READY_TICKS, ROUND_OVER_TICKS};
 use crate::sim::{is_held, GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
@@ -241,8 +242,10 @@ pub fn draw(game: &GameState, effects: &mut Effects, assets: &Assets) {
     for (player, fighter) in game.fighters.iter().enumerate() {
         let wins = game.round.wins[player];
         draw_health_bar(&fixed, assets, anim, player, fighter.health, wins);
+        draw_combo_hud(&fixed, player, fighter);
     }
     draw_round_status(&fixed, assets, anim, &game.round);
+    draw_special_banner(&fixed, game);
 
     // The checksum is shown so two runs (or two laptops) can be compared by
     // eye: same inputs must give the same number.
@@ -253,6 +256,49 @@ pub fn draw(game: &GameState, effects: &mut Effects, assets: &Assets) {
         get_fps()
     );
     fixed.text_shadowed(&debug, 20.0, 708.0, 20.0, DIM_TEXT);
+}
+
+/// Streak counter and "special ready" prompt under each health bar. Plain
+/// text on purpose: what it says is gameplay information, how it looks is
+/// for the art pass.
+fn draw_combo_hud(view: &View, player: usize, fighter: &Fighter) {
+    let mut lines: Vec<(String, Color)> = Vec::new();
+    let hits = u16::from(fighter.punches) + u16::from(fighter.kicks);
+    if fighter.streak_timer > 0 && hits > 0 {
+        lines.push((format!("COMBO x{hits}"), WHITE));
+    }
+    if let Some(special) = fighter.ready_special() {
+        let (name, button) = match special {
+            Special::DynamitePunch => ("DYNAMITE PUNCH", "punch"),
+            Special::SuperKick => ("SUPER KICK", "kick"),
+            Special::Nado => ("NADO", "punch or kick"),
+        };
+        lines.push((format!("{name} READY: press {button}"), YELLOW));
+    }
+    for (i, (text, color)) in lines.iter().enumerate() {
+        let size = 22.0;
+        let x = if player == 1 {
+            1260.0 - view.text_width(text, size)
+        } else {
+            20.0
+        };
+        view.text_shadowed(text, x, 104.0 + i as f32 * 24.0, size, *color);
+    }
+}
+
+/// The name of a special move across the top while it is being performed.
+fn draw_special_banner(view: &View, game: &GameState) {
+    for fighter in &game.fighters {
+        let name = match fighter.action {
+            Action::Dynamite => "DYNAMITE PUNCH!",
+            Action::SuperKick => "SUPER KICK!",
+            Action::Nado => "NADO!",
+            _ => continue,
+        };
+        let size = 40.0;
+        let x = 640.0 - view.text_width(name, size) / 2.0;
+        view.text_shadowed(name, x, 150.0, size, YELLOW);
+    }
 }
 
 /// Sim units (integer subpixels) to logical pixels. This is the boundary
@@ -676,15 +722,15 @@ pub fn draw_menu(menu: &Menu, assets: &Assets) {
             let p1: &[(&[&str], &str)] = &[
                 (&[], "P1"),
                 (&["a", "d", "w", "s"], "move"),
-                (&["f"], "light"),
-                (&["g"], "heavy"),
+                (&["f"], "punch"),
+                (&["g"], "kick"),
             ];
             draw_key_hints(&view, assets, 80.0, 580.0, p1);
             let p2: &[(&[&str], &str)] = &[
                 (&[], "P2"),
                 (&["left", "right", "up", "down"], "move"),
-                (&["k"], "light"),
-                (&["l"], "heavy"),
+                (&["k"], "punch"),
+                (&["l"], "kick"),
             ];
             draw_key_hints(&view, assets, 80.0, 640.0, p2);
         }

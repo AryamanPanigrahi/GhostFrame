@@ -16,6 +16,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | G5: `RollbackGame` + `SyncTestSession` | Aryaman | ✅ Done: passes the sync test |
 | G6: game feel (render-only) | Ram | Partly done: flash + shake (no hitstop visuals, health-bar animation or frame-data tuning yet, see below) |
 | G7: menu, WASM build | Aryaman | ✅ Done (online items wait for I1) |
+| Combos: hit streaks and special moves (dynamite punch, super kick, nado) | Aryaman | ✅ Done; art for the specials is still placeholder |
 | R1: crate skeleton, `api.rs`, `InputQueue` | Ram | ✅ Done |
 | R2: `SyncTestSession` + `boxes` example | Ram | ✅ Done |
 | R3: `P2PSession` | Aryaman | ✅ Done |
@@ -28,7 +29,7 @@ What's built so far, milestone by milestone: the gist, the files, the tests and 
 | Art: original pixel art + render wiring | Ram | ✅ Done: fighter (2 schemes), stage, sparks, HUD, menus, font; see "Art" below |
 | I3 deploy + public link | Together | ◐ Prep done (relay serves the web build; Dockerfile includes it). Untested Dockerfile, no host chosen, no README yet |
 
-**Tests:** 193 tests, all passing (`cargo test --workspace`): 63 in `rewind`, 106 in `riposte-game`, 24 in `riposte-server` (including 4 for serving the web build). fmt and clippy clean.
+**Tests:** 217 tests, all passing (`cargo test --workspace`): 65 in `rewind`, 128 in `riposte-game`, 24 in `riposte-server`. fmt and clippy clean.
 
 ---
 
@@ -515,6 +516,51 @@ cargo test -p riposte-game sync -- --nocapture
 - **Ram's parts:** the walkthrough covers the whole path, but Ram's own LEARNING.md and docs for R1/R2/R5/R6/S1/S2 are his to keep current.
 
 ---
+
+## Combos: hit streaks and special moves (Aryaman)
+
+**Gist:** landing normal hits in a row unlocks a special move that you then perform with your next button press.
+- **Dynamite punch:** 3 punches (Light hits), no kicks. Performed with punch. Blasts the opponent about 450 px backwards.
+- **Super kick:** 4 kicks (Heavy hits), no punches. Performed with kick. Launches the opponent straight up to the top of the screen; they fall back down, helpless for 80 ticks.
+- **Nado:** 3 hits with at least one punch and one kick. Performed with either button. The hitbox reaches across the whole stage, and a hit drags the opponent to just in front of you.
+
+**Your design choices (asked up front):**
+- **Punch and kick:** Light is the punch and Heavy is the kick. There are no new buttons.
+- **Streak:** a window, not a strict chain. Each hit must land within 1.5 s of the last, and being hit ends your streak.
+  - I'd said "about 1 second". Heavy attacks recover slowly, so I used 90 ticks (1.5 s) or four kicks would be nearly impossible.
+- **Trigger:** the streak unlocks the special and you perform it. Under the health bar the game shows "COMBO xN" and "DYNAMITE PUNCH READY: press punch". A banner names the move while it plays.
+- **Nado:** any 3 hits mixing both types.
+
+**Files:** `game/src/sim/combo.rs` (new: the rules), `game/src/sim/attack.rs` (`HitEffect`, three new attacks), `game/src/sim/fighter.rs` (streak counters, `ready_special`, `register_hit`, launch with a ceiling, pull), `game/src/sim/mod.rs` (hit resolution order), `game/src/bot.rs` (chases and cashes in streaks), `game/src/render/mod.rs` (combo HUD, banner, "punch"/"kick" legend), `game/src/render/anim.rs` and `game/src/main.rs` (Ram's: see below).
+
+**Decisions:**
+- Streak state lives in `Fighter`, so it is in the saved state and the checksum. A new field now fails to compile unless it is hashed.
+- Both attackers' streaks are updated *before* either defender is hit, so a trade ends both streaks, whichever fighter is handled first.
+- A special that lands doesn't add to a streak; one that misses still uses the streak up.
+- A launched fighter is stopped by a ceiling at head height; the long hitstun keeps them stunned until they land.
+- A nado target is clamped inside the walls, and a hit during a pull cancels it.
+
+**Touched Ram's render files, minimally:**
+- `render/anim.rs`: the three new actions reuse the light and heavy drawings (the match there lists every action).
+- `main.rs`: `App::Local` is boxed, because the larger fighter state made clippy flag the enum size.
+- **They have no art of their own yet**: no punch/kick/pull/launch animations or effects. Those are for the art pass.
+
+**Tests:** 18 new:
+- `combo.rs` rules (5).
+- 9 in the sim: each special unlocked and performed with its effect checked; streak expiry; being hit; a trade; a whiff; the button for each; the wall clamp.
+- 4 on the fighter: ceiling, exact pull arrival, cancel, streak counting.
+- A scripted player performs every special over and over under the rollback sync test (4 dynamite punches, 3 super kicks, 3 nados in 4000 frames, no desync).
+- The checksum test covers the new fields.
+- I broke three things on purpose (no streak building, a weak launch, hits not ending the victim's streak): the tests caught each one.
+
+**Verified in a browser:** I played each special in local 2-player. The HUD showed "COMBO x3 / DYNAMITE PUNCH READY", the banner appeared, P2 was blasted across the stage, launched to the top of the screen, and pulled from about 250 px away to just in front of P1.
+
+**Open:**
+- **Balance, all guesses:**
+  - The nado can't be dodged once it starts (jumping doesn't avoid it); the counter is to hit the attacker during its 18 ticks of startup.
+  - Nobody is invulnerable while launched, so a juggle after the super kick is possible and could be strong.
+- **Art and effects** for the three moves (Ram).
+- **The bot** in Practice vs lag cashes in a special whenever it earns one, but it only earns them occasionally, because it attacks randomly. To see the moves, earn them yourself in Local 2-player.
 
 ## Open questions
 

@@ -90,7 +90,8 @@ impl LocalMatch {
 /// Which screen the program is on.
 enum App {
     Menu(Menu),
-    Local(LocalMatch),
+    /// Boxed like the others: the game state is much bigger than the menu.
+    Local(Box<LocalMatch>),
     /// Boxed because it holds two games and two snapshot rings, much bigger
     /// than the other variants.
     Practice(Box<Practice>),
@@ -121,7 +122,7 @@ async fn main() {
                 for key in read_menu_keys() {
                     match menu.handle(key) {
                         Some(MenuAction::StartLocal) => {
-                            switch_to = Some(App::Local(LocalMatch::new()));
+                            switch_to = Some(App::Local(Box::new(LocalMatch::new())));
                         }
                         Some(MenuAction::StartPractice) => {
                             switch_to = Some(App::Practice(Box::new(Practice::new())));

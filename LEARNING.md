@@ -849,3 +849,39 @@ Online play in the browser failed twice, both times *between* the two halves of 
 **How it's detected:** a TCP socket finds out it's dead when a read or write fails. If the other end's process dies, its OS sends a reset and the next read fails at once (what the LAN test saw). If a cable or Wi-Fi link silently disappears, nothing arrives at all, and the OS only gives up after its retransmission timeout. A game-level heartbeat (no message from the peer for N seconds) would catch that case sooner; we don't have one yet.
 
 **Where:** `ByteSocket::is_closed` and the end of `WebSocketTransport::pump` in `rewind/src/transport/websocket.rs`; `connection_lost` in `OnlineScreen` and the `ConnectionLost` arm of `Lobby::update` in `game/src/netplay.rs`.
+
+---
+
+## Hit streaks and special moves (combo state machine)
+
+**What:** Every fighter carries a small streak: how many *punches* (Light hits) and *kicks* (Heavy hits) they've landed, and a timer of 90 ticks (1.5 s) that restarts on each hit. A pure function, `earned(punches, kicks)`, maps the counts to a special: 3+ punches is the dynamite punch, 4+ kicks is the super kick, and 3+ hits with at least one of each is the nado. A fighter whose streak has earned a special performs it with the next press of the right button. The streak ends when the timer runs out, when the fighter is hit, or when they perform the special (even if it misses).
+
+**Why it's built this way:**
+- **No separate "special ready" flag.** What's ready is *derived* from the counts, so it can never disagree with them.
+- **The streak is part of `Fighter`.** It's in the saved state and the checksum, so rollback restores it and a desync in it would be detected. The checksum code destructures `Fighter` by name, so adding a field without hashing it is a compile error.
+- **Hits are resolved in a fixed order:** both attackers' streaks are updated first, then both defenders are hit. If it were one player at a time, a trade would end one streak and keep the other depending on who is handled first.
+- **A special is just another attack.** It has frame data and a state (`Action::Dynamite` and so on), so the existing machinery for startup, active frames, hitboxes and interruption works unchanged.
+
+**Where:** `game/src/sim/combo.rs` (`earned`, `STREAK_WINDOW`), `Fighter::register_hit`, `ready_special`, `attack_for` and `take_hit` in `game/src/sim/fighter.rs`, `resolve_hits` in `game/src/sim/mod.rs`.
+
+---
+
+## Hit effects: push, launch and pull
+
+**What:** Each attack has a `HitEffect`. **Push** sets horizontal speed away from the attacker (the dynamite punch just uses a very large push). **Launch** sets a big upward speed and no sideways speed, and **a ceiling** (`feet y >= head height`) stops the fighter with their head at the top of the stage, so the arc is the same however fast they were launched. **Pull** stores a `pull_target` (100 px in front of the attacker, clamped inside the walls); each tick of hitstun moves the defender toward it by at most 28 px and arrives exactly, never overshooting.
+
+**Why:** Effects belong to the *hit*, applied in one place (`take_hit`). Moving the position directly for a pull, instead of using speed and friction, is what makes "arrives exactly at the target" true: with a speed, friction would carry them past it. The long hitstun on the super kick (80 ticks) is longer than the flight (about 70), so the launched fighter is stunned until they land.
+
+**Where:** `HitEffect` in `game/src/sim/attack.rs`; `take_hit`, `pull_towards`, and the ceiling in `step` in `game/src/sim/fighter.rs`. Tests: `launch_stops_at_the_ceiling_and_comes_back_down`, `pull_arrives_exactly_without_overshooting`.
+
+---
+
+## Testing rare moves under the sync test
+
+**What:** A random bot almost never lands four identical kicks in a row, so the random sync test earned only about two specials in 24,000 frames. `the_special_moves_pass_the_sync_test` uses a scripted player that deliberately plays each special over and over: 3 punches then a dynamite punch, 4 kicks then a super kick, 2 punches and a kick then a nado. Over 4,000 frames it performs 4 dynamite punches, 3 super kicks and 3 nados, all replayed from snapshots with 8 frames of rollback every tick.
+
+**Why:** A test is only worth what it reaches. When my first attempt (asserting the *random* bot earned each special) failed, the honest fix was a test that really plays them, not a weaker assertion.
+
+**Also:** the three deliberate breakages (no streak building, a weak launch, hits not ending the victim's streak) were each caught by the new tests. Match statements that list *every* enum value (Ram's `pose_for`) fail to compile when a variant is added, which is a feature: you can't forget to say what the new action looks like.
+
+**Where:** `game/src/sim/rollback.rs` (`ComboPlayer`), `game/src/bot.rs`.

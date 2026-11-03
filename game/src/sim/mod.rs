@@ -4,6 +4,7 @@
 
 pub mod attack;
 pub mod checksum;
+pub mod combo;
 pub mod fighter;
 pub mod rect;
 pub mod rng;
@@ -113,13 +114,26 @@ impl GameState {
         // cancelled: P1 would always win ties. This way both land (a trade).
         let hit_on_1 = check_hit(&self.fighters[0], &self.fighters[1]);
         let hit_on_0 = check_hit(&self.fighters[1], &self.fighters[0]);
-        if let Some(attack) = hit_on_1 {
+        // Streaks are updated for both attackers before either defender is
+        // hit. Being hit ends your streak, so in a trade both streaks end, no
+        // matter which fighter happens to be handled first.
+        if hit_on_1.is_some() {
             self.fighters[0].attack_connected = true;
-            self.fighters[1].take_hit(attack, self.fighters[0].facing);
+            self.fighters[0].register_hit();
+        }
+        if hit_on_0.is_some() {
+            self.fighters[1].attack_connected = true;
+            self.fighters[1].register_hit();
+        }
+        if let Some(attack) = hit_on_1 {
+            let attacker = &self.fighters[0];
+            let (facing, x) = (attacker.facing, attacker.x);
+            self.fighters[1].take_hit(attack, facing, x);
         }
         if let Some(attack) = hit_on_0 {
-            self.fighters[1].attack_connected = true;
-            self.fighters[0].take_hit(attack, self.fighters[1].facing);
+            let attacker = &self.fighters[1];
+            let (facing, x) = (attacker.facing, attacker.x);
+            self.fighters[0].take_hit(attack, facing, x);
         }
     }
 
@@ -560,7 +574,7 @@ mod tests {
     #[test]
     fn changing_any_part_of_the_state_changes_the_checksum() {
         let base = GameState::new(1);
-        let changes: [fn(&mut GameState); 9] = [
+        let changes: [fn(&mut GameState); 13] = [
             |s| s.frame += 1,
             |s| s.inputs[1] = LIGHT,
             |s| s.fighters[0].x += 1,
@@ -570,6 +584,10 @@ mod tests {
             |s| s.round.wins[0] = 1,
             |s| s.round.phase = Phase::Fight,
             |s| s.rng.state += 1,
+            |s| s.fighters[0].punches = 1,
+            |s| s.fighters[1].kicks = 1,
+            |s| s.fighters[0].streak_timer = 5,
+            |s| s.fighters[1].pull_target = Some(0),
         ];
         for change in changes {
             let mut changed = base.clone();
@@ -587,5 +605,271 @@ mod tests {
         let mut b = a.clone();
         b.fighters.swap(0, 1);
         assert_ne!(a.checksum(), b.checksum());
+    }
+
+    // ---- special moves (combo.rs) ----
+
+    use attack::{DYNAMITE_ATTACK, NADO_ATTACK, SUPER_KICK_ATTACK};
+    use combo::{Special, STREAK_WINDOW};
+    use fighter::{FLOOR_Y, PULL_GAP, STAND_HEIGHT};
+
+    /// Player 0 presses `button` once, then waits until the attack is over.
+    fn throw(state: &mut GameState, button: Input, attack: Attack) {
+        state.advance([button, 0]);
+        for _ in 1..attack.total() {
+            state.advance([0, 0]);
+        }
+    }
+
+    fn punch(state: &mut GameState) {
+        throw(state, LIGHT, LIGHT_ATTACK);
+    }
+
+    fn kick(state: &mut GameState) {
+        throw(state, HEAVY, HEAVY_ATTACK);
+    }
+
+    /// Player 0 walks forward until the fighters are at most `gap_px` apart.
+    fn close_in(state: &mut GameState, gap_px: i32) {
+        for _ in 0..300 {
+            if (state.fighters[1].x - state.fighters[0].x) / SUBPIXELS <= gap_px {
+                return;
+            }
+            state.advance([RIGHT, 0]);
+        }
+        panic!("never got within {gap_px} px");
+    }
+
+    #[test]
+    fn three_punches_unlock_the_dynamite_punch_which_blasts_the_defender_back() {
+        let mut state = fighters_apart(100);
+        punch(&mut state);
+        punch(&mut state);
+        assert_eq!(
+            state.fighters[0].ready_special(),
+            None,
+            "two punches earn nothing"
+        );
+        punch(&mut state);
+        assert_eq!(
+            state.fighters[0].ready_special(),
+            Some(Special::DynamitePunch)
+        );
+        assert_eq!(
+            state.fighters[1].health,
+            MAX_HEALTH - 3 * LIGHT_ATTACK.damage
+        );
+
+        close_in(&mut state, 100);
+        state.advance([LIGHT, 0]);
+        assert_eq!(state.fighters[0].action, Action::Dynamite);
+        assert_eq!(
+            state.fighters[0].ready_special(),
+            None,
+            "performing it uses the streak up"
+        );
+
+        let before = state.fighters[1].health;
+        hold(&mut state, [0, 0], DYNAMITE_ATTACK.startup);
+        let p2 = &state.fighters[1];
+        assert_eq!(p2.health, before - DYNAMITE_ATTACK.damage);
+        assert_eq!(p2.action, Action::Hitstun);
+        assert_eq!(
+            p2.vx, DYNAMITE_ATTACK.knockback,
+            "blasted away from the attacker"
+        );
+
+        let landed_at = p2.x;
+        hold(&mut state, [0, 0], DYNAMITE_ATTACK.hitstun);
+        let slid = (state.fighters[1].x - landed_at) / SUBPIXELS;
+        assert!(slid > 300, "only blasted {slid} px");
+        assert_eq!(
+            state.fighters[0].punches, 0,
+            "a special doesn't start a new streak"
+        );
+    }
+
+    #[test]
+    fn four_kicks_unlock_the_super_kick_which_launches_the_defender_to_the_ceiling() {
+        let mut state = fighters_apart(100);
+        for i in 1..=4 {
+            close_in(&mut state, 100);
+            kick(&mut state);
+            let expected = if i == 4 {
+                Some(Special::SuperKick)
+            } else {
+                None
+            };
+            assert_eq!(
+                state.fighters[0].ready_special(),
+                expected,
+                "after kick {i}"
+            );
+        }
+        let before = state.fighters[1].health;
+        assert_eq!(before, MAX_HEALTH - 4 * HEAVY_ATTACK.damage);
+
+        close_in(&mut state, 100);
+        state.advance([HEAVY, 0]);
+        assert_eq!(state.fighters[0].action, Action::SuperKick);
+        hold(&mut state, [0, 0], SUPER_KICK_ATTACK.startup);
+        let p2 = &state.fighters[1];
+        assert_eq!(p2.health, before - SUPER_KICK_ATTACK.damage);
+        assert!(p2.vy < 0, "launched upward");
+
+        let x = p2.x;
+        let mut highest = p2.y;
+        for _ in 0..SUPER_KICK_ATTACK.hitstun {
+            state.advance([0, 0]);
+            highest = highest.min(state.fighters[1].y);
+            assert_eq!(state.fighters[1].x, x, "straight up, no sideways drift");
+        }
+        assert_eq!(highest, STAND_HEIGHT, "head stops at the top of the stage");
+        let p2 = &state.fighters[1];
+        assert_eq!(p2.y, FLOOR_Y, "back on the floor once the stun ends");
+        assert_eq!(p2.action, Action::Idle);
+    }
+
+    #[test]
+    fn a_mix_of_punches_and_kicks_unlocks_the_nado_which_pulls_the_defender_in_from_afar() {
+        let mut state = fighters_apart(100);
+        punch(&mut state);
+        punch(&mut state);
+        assert_eq!(state.fighters[0].ready_special(), None);
+        close_in(&mut state, 100);
+        kick(&mut state);
+        assert_eq!(state.fighters[0].ready_special(), Some(Special::Nado));
+
+        // The defender is now at the far end of the stage.
+        state.fighters[1].x = 1200 * SUBPIXELS;
+        state.fighters[1].action = Action::Idle;
+        state.fighters[1].hitstun = 0;
+        state.fighters[1].vx = 0;
+        let attacker_x = state.fighters[0].x;
+        let before = state.fighters[1].health;
+
+        state.advance([LIGHT, 0]); // either button performs it
+        assert_eq!(state.fighters[0].action, Action::Nado);
+        hold(&mut state, [0, 0], NADO_ATTACK.startup);
+        assert_eq!(state.fighters[1].health, before - NADO_ATTACK.damage);
+
+        hold(&mut state, [0, 0], NADO_ATTACK.hitstun);
+        assert_eq!(
+            state.fighters[1].x,
+            attacker_x + PULL_GAP,
+            "dragged to just in front of the attacker"
+        );
+        assert_eq!(state.fighters[0].x, attacker_x, "the attacker stays put");
+    }
+
+    #[test]
+    fn a_streak_runs_out_after_the_window() {
+        let mut state = fighters_apart(100);
+        punch(&mut state);
+        punch(&mut state);
+        assert_eq!(state.fighters[0].punches, 2);
+        hold(&mut state, [0, 0], STREAK_WINDOW);
+        assert_eq!(state.fighters[0].punches, 0);
+
+        // A third punch now starts over instead of earning the dynamite punch.
+        close_in(&mut state, 100);
+        punch(&mut state);
+        assert_eq!(state.fighters[0].punches, 1);
+        assert_eq!(state.fighters[0].ready_special(), None);
+    }
+
+    #[test]
+    fn being_hit_ends_your_streak() {
+        let mut state = fighters_apart(100);
+        punch(&mut state);
+        punch(&mut state);
+        assert_eq!(state.fighters[0].punches, 2);
+        hold(&mut state, [0, 0], 20); // let the defender out of hitstun
+
+        hold(&mut state, [0, LIGHT], 1); // player 1 strikes back
+        hold(&mut state, [0, 0], LIGHT_ATTACK.startup);
+        assert!(state.fighters[0].health < MAX_HEALTH);
+        assert_eq!(state.fighters[0].punches, 0);
+    }
+
+    #[test]
+    fn a_trade_ends_both_streaks() {
+        let mut state = fighters_apart(100);
+        for fighter in &mut state.fighters {
+            fighter.punches = 2;
+            fighter.streak_timer = STREAK_WINDOW;
+        }
+        hold(&mut state, [LIGHT, LIGHT], 1);
+        hold(&mut state, [0, 0], LIGHT_ATTACK.startup);
+        for fighter in &state.fighters {
+            assert_eq!(fighter.health, MAX_HEALTH - LIGHT_ATTACK.damage);
+            assert_eq!(
+                (fighter.punches, fighter.kicks, fighter.streak_timer),
+                (0, 0, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn a_special_uses_the_streak_up_even_if_it_misses() {
+        let mut state = fighters_apart(700);
+        state.fighters[0].punches = 3;
+        state.fighters[0].streak_timer = STREAK_WINDOW;
+        state.advance([LIGHT, 0]);
+        assert_eq!(state.fighters[0].action, Action::Dynamite);
+        hold(&mut state, [0, 0], DYNAMITE_ATTACK.total());
+        assert_eq!(state.fighters[1].health, MAX_HEALTH, "nothing was in reach");
+        assert_eq!(state.fighters[0].ready_special(), None);
+
+        state.advance([LIGHT, 0]);
+        assert_eq!(
+            state.fighters[0].action,
+            Action::Light,
+            "back to a plain punch"
+        );
+    }
+
+    #[test]
+    fn each_special_is_performed_with_its_own_button() {
+        let perform = |punches: u8, kicks: u8, button: Input| {
+            let mut state = fighters_apart(700);
+            state.fighters[0].punches = punches;
+            state.fighters[0].kicks = kicks;
+            state.fighters[0].streak_timer = STREAK_WINDOW;
+            state.advance([button, 0]);
+            state.fighters[0].action
+        };
+        assert_eq!(perform(3, 0, LIGHT), Action::Dynamite);
+        assert_eq!(
+            perform(3, 0, HEAVY),
+            Action::Heavy,
+            "the dynamite punch is a punch"
+        );
+        assert_eq!(perform(0, 4, HEAVY), Action::SuperKick);
+        assert_eq!(
+            perform(0, 4, LIGHT),
+            Action::Light,
+            "the super kick is a kick"
+        );
+        assert_eq!(perform(2, 1, LIGHT), Action::Nado);
+        assert_eq!(perform(2, 1, HEAVY), Action::Nado);
+    }
+
+    #[test]
+    fn a_nado_never_pulls_the_defender_into_a_wall() {
+        let mut state = fighting_state();
+        state.fighters[0].x = 1180 * SUBPIXELS;
+        state.fighters[1].x = 1230 * SUBPIXELS;
+        state.fighters[0].punches = 2;
+        state.fighters[0].kicks = 1;
+        state.fighters[0].streak_timer = STREAK_WINDOW;
+        state.advance([LIGHT, 0]);
+        hold(
+            &mut state,
+            [0, 0],
+            NADO_ATTACK.startup + NADO_ATTACK.hitstun,
+        );
+        // 1180 + 100 would be 1280, outside the 1280 px stage.
+        assert_eq!(state.fighters[1].x, STAGE_WIDTH - 40 * SUBPIXELS);
     }
 }

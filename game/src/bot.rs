@@ -7,6 +7,7 @@
 //! forward, but nothing it does needs to be deterministic across machines,
 //! because its inputs travel over the network like a human's.
 
+use crate::sim::combo::Special;
 use crate::sim::rng::Rng;
 use crate::sim::{GameState, Input, DOWN, HEAVY, LEFT, LIGHT, RIGHT, UP};
 
@@ -14,6 +15,10 @@ pub struct Bot {
     rng: Rng,
     held: Input,
     frames_left: u32,
+    /// Which normal attack the bot favours for a while: 0 punches, 1 kicks,
+    /// anything else mixes. Long runs of one attack are what build the
+    /// streaks that unlock the special moves.
+    style: u8,
 }
 
 impl Bot {
@@ -22,6 +27,16 @@ impl Bot {
             rng: Rng::new(seed),
             held: 0,
             frames_left: 0,
+            style: 0,
+        }
+    }
+
+    fn normal_attack(&mut self) -> Input {
+        match self.style {
+            0 => LIGHT,
+            1 => HEAVY,
+            _ if self.rng.next_u64().is_multiple_of(2) => LIGHT,
+            _ => HEAVY,
         }
     }
 
@@ -35,18 +50,27 @@ impl Bot {
                 LEFT
             };
             let back = if forward == RIGHT { LEFT } else { RIGHT };
+            if self.rng.next_u64().is_multiple_of(10) {
+                self.style = (self.rng.next_u64() % 3) as u8;
+            }
             // A fresh choice each segment, so attack buttons are released
             // and pressed again (attacks start on a press, not a hold).
-            self.held = match self.rng.next_u64() % 20 {
-                0..=6 => forward,
-                7..=10 => LIGHT,
-                11..=13 => HEAVY,
-                14 => forward | LIGHT,
-                15 => UP | forward,
-                16 => DOWN,
-                17 => DOWN | HEAVY,
-                18 => back,
-                _ => 0,
+            let choice = self.rng.next_u64() % 20;
+            self.held = match game.fighters[me].ready_special() {
+                // Cash in a streak: the super kick is a kick, the other two
+                // can be performed with a punch.
+                Some(Special::SuperKick) => HEAVY,
+                Some(_) => LIGHT,
+                None => match choice {
+                    0..=6 => forward,
+                    7..=13 => self.normal_attack(),
+                    14 => forward | LIGHT,
+                    15 => UP | forward,
+                    16 => DOWN,
+                    17 => DOWN | HEAVY,
+                    18 => back,
+                    _ => 0,
+                },
             };
             self.frames_left = 3 + (self.rng.next_u64() % 10) as u32;
         }

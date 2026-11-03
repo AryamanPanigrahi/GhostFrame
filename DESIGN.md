@@ -60,7 +60,8 @@ riposte/
 │       ├── session.rs    # LocalSession (both players on one keyboard)
 │       ├── sim/          # deterministic simulation (NO floats)
 │       │   ├── mod.rs    # Input bits, GameState, advance, hit resolution
-│       │   ├── fighter.rs # movement + action state machine
+│       │   ├── fighter.rs # movement + action state machine, streak counters, launch and pull
+│       │   ├── combo.rs  # hit streaks and the three special moves they unlock
 │       │   ├── attack.rs # frame data and hitboxes
 │       │   ├── rect.rs   # AABB overlap
 │       │   ├── round.rs  # round/match phases and timings
@@ -244,9 +245,13 @@ struct Fighter {
     hitstun: u16,             // ticks of hitstun left
     health: i16,              // starts at 1000
     attack_connected: bool,   // this swing already hit
+    punches: u8, kicks: u8,   // normal hits landed in the current streak (combo.rs)
+    streak_timer: u16,        // ticks until the streak runs out (90 = 1.5 s)
+    pull_target: Option<i32>, // where a nado is dragging this fighter to
 }
 
-enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun, Knockdown }
+enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun, Knockdown,
+              Dynamite, SuperKick, Nado }
 ```
 
 **Tick order** (`GameState::advance`):
@@ -254,7 +259,7 @@ enum Action { Idle, Walk, Crouch, Jump, Light, Heavy, Hitstun, Knockdown }
 1. Both fighters turn to face each other, using start-of-tick positions.
 2. Presses are worked out as `held & !last_tick`.
 3. Both fighters step: timers, then input if actionable, then movement, floor and walls.
-4. During `Fight` only, both hits are checked, then applied, then KO is checked.
+4. During `Fight` only, both hits are checked, then both attackers' streaks are updated, then both hits are applied (a trade ends both streaks), then KO is checked.
 5. The round timer ticks, which may change phase or reset the fighters.
 6. `frame` and `inputs` are stored.
 
@@ -280,6 +285,22 @@ Reading before writing keeps the result independent of which player is updated f
 - A double KO is a draw and the round is replayed.
 
 **Checksum:** FNV-1a over every field of `GameState`, in fixed order, little-endian, with explicit enum tags (`GameState::checksum`).
+
+**Special moves** (`sim/combo.rs`, `sim/attack.rs`). A Light hit is a *punch* and a Heavy hit is a *kick*. Landing normal hits builds a streak that survives 90 ticks (1.5 s) after the last one and ends when the fighter is hit. The streak earns a special, which the fighter performs with their next press of the right button. Performing it uses the streak up, even if it misses.
+
+| Streak | Special | Button |
+|---|---|---|
+| 3+ punches, no kicks | Dynamite punch | punch |
+| 4+ kicks, no punches | Super kick | kick |
+| 3+ hits with at least one of each | Nado | either |
+
+| | Startup | Active | Recovery | Damage | Hitstun | Effect |
+|---|---|---|---|---|---|---|
+| Dynamite punch | 14 | 4 | 28 | 150 | 40 | knockback 16 px/tick (about 450 px) |
+| Super kick | 16 | 4 | 30 | 200 | 80 | launched at 26 px/tick; the ceiling stops them with their head at the top of the stage |
+| Nado | 18 | 3 | 22 | 60 | 50 | hitbox reaches the whole stage ahead; the defender is dragged at 28 px/tick to 100 px in front of the attacker |
+
+All numbers are first guesses to tune by playing.
 
 **Not built yet:** blocking, round timer, air attacks and pushboxes (see PROGRESS.md, open questions).
 

@@ -282,8 +282,15 @@ fn step_track(t: &mut Track, f: &Fighter, passed: u32, frame: u32, particles: &m
 fn pose_for(f: &Fighter, t: &Track, game: &GameState, player: usize) -> Pose {
     let airborne = f.is_airborne();
     match f.action {
-        Action::Light => Pose::new("light", timeline(&LIGHT_TIMELINE, f.action_frame), 6),
-        Action::Heavy => Pose::new("heavy", timeline(&HEAVY_TIMELINE, f.action_frame), 9),
+        // The special moves reuse the light and heavy drawings until they
+        // get their own art: the dynamite punch is a punch, the super kick
+        // and the nado are kicks.
+        Action::Light | Action::Dynamite => {
+            Pose::new("light", timeline(&LIGHT_TIMELINE, f.action_frame), 6)
+        }
+        Action::Heavy | Action::SuperKick | Action::Nado => {
+            Pose::new("heavy", timeline(&HEAVY_TIMELINE, f.action_frame), 9)
+        }
         Action::Jump => {
             // Ticks since takeoff, straight from the vertical speed:
             // vy = JUMP_VELOCITY + GRAVITY * t.
